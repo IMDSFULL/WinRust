@@ -34,7 +34,10 @@ use windows_sys::Win32::{
     Foundation::*,
     Globalization::{GetDateFormatW, GetLocaleInfoW, GetTimeFormatW},
     Graphics::{
-        Dwm::DwmGetWindowAttribute,
+        Dwm::{
+            DWM_THUMBNAIL_PROPERTIES, DWM_TNP_OPACITY, DWM_TNP_RECTDESTINATION, DWM_TNP_VISIBLE, DwmGetWindowAttribute, DwmQueryThumbnailSourceSize, DwmRegisterThumbnail, DwmUnregisterThumbnail,
+            DwmUpdateThumbnailProperties,
+        },
         Gdi::*,
         GdiPlus::{
             FillModeAlternate, GdipAddPathArc, GdipClosePathFigure, GdipCreateFromHDC, GdipCreatePath, GdipCreateSolidFill, GdipDeleteBrush, GdipDeleteGraphics, GdipDeletePath, GdipFillPath, GdipSetPixelOffsetMode,
@@ -128,6 +131,9 @@ const SYS_GRP: i32 = -11; // hover key of the one pill around wifi + volume + ba
 const WIN_START: u32 = WM_APP + 10; // posted by the keyboard hook: Win key pressed alone
 const ALT_TAB: u32 = WM_APP + 11; // posted by the keyboard hook: Alt+Tab (wp 1 = Shift held: backwards)
 const ALT_UP: u32 = WM_APP + 12; // posted by the keyboard hook: Alt released while switching (wp 1 = Esc: cancel)
+const ALT_NAV: u32 = WM_APP + 17; // posted by the keyboard hook: an arrow key while switching (wp 0 left, 1 right, 2 up, 3 down)
+const ALT_CLOSE: u32 = WM_APP + 18; // posted by the keyboard hook: Delete while switching = close the selected window
+const ALT_ENTER: u32 = WM_APP + 19; // posted by the keyboard hook: Enter while switching = switch to the selected window now
 static SWITCHING: AtomicBool = AtomicBool::new(false); // Alt+Tab switcher open (the hook thread reads it)
 static FULLSCREEN: AtomicBool = AtomicBool::new(false);
 static DESK_HIDE: AtomicBool = AtomicBool::new(false); // the desktop in front and the pointer away from the bar for 2 s
@@ -649,11 +655,228 @@ unsafe fn show_tip(s: String, cx: i32) {
     InvalidateRect(tw, null(), 1);
 }
 
-// ---------- Alt+Tab switcher: the open windows' icons, most recently used first, the selected one's title below ----------
+// ---------- Alt+Tab switcher: a card per open window (most recently used first) with its live preview (DWM thumbnail), icon and title ----------
 
-const SW_CELL: i32 = 76;
-const SW_PAD: i32 = 14;
-const SW_TITLE: i32 = 30;
+const SW_PAD: i32 = 14; // outer padding
+const SW_CARD: i32 = 230; // card width at full size
+const SW_MIN: i32 = 110; // narrowest card when many windows are open
+const SW_HEAD: i32 = 28; // header strip: icon + title
+const SW_GAP: i32 = 6; // inner margin of a card
+
+thread_local! {
+    static SW_GRID: Cell<(i32, i32, i32)> = const { Cell::new((1, 1, 1)) }; // columns, card width, card height (already scaled)
+    static THUMBS: RefCell<Vec<isize>> = const { RefCell::new(Vec::new()) }; // live DWM thumbnails of the open switcher
+    static SW_MON: Cell<RECT> = const { Cell::new(RECT { left: 0, top: 0, right: 1, bottom: 1 }) }; // the monitor the switcher is shown on
+    static SW_PT: Cell<(i32, i32)> = const { Cell::new((0, 0)) }; // the pointer when the switcher opened: only a real move selects
+}
+
+/// (columns, card width, card height) for `n` windows in a `max_w` x `max_h` area: the cards shrink until the rows fit.
+fn sw_grid(n: usize, max_w: i32, max_h: i32, cw0: i32, min_cw: i32, head: i32, gap: i32) -> (i32, i32, i32) {
+    let n = n.max(1) as i32;
+    let mut cw = cw0;
+    loop {
+        let ch = head + cw * 9 / 16 + gap;
+        let cols = (max_w / cw).clamp(1, n);
+        let rows = (n + cols - 1) / cols;
+        if rows * ch <= max_h || cw <= min_cw {
+            // balanced rows: 7 windows on 4 columns are 4 + 3, never a lone card stranded on the last row
+            return ((n + rows - 1) / rows, cw, ch);
+        }
+        cw = (cw * 85 / 100).max(min_cw);
+    }
+}
+
+/// New selection after an arrow key (0 left, 1 right, 2 up, 3 down) in a grid of `cols` columns over `n` cards; it wraps around.
+fn sw_move(sel: usize, dir: u8, cols: i32, n: usize) -> usize {
+    let (cols, n) = (cols.max(1) as usize, n.max(1));
+    let sel = sel.min(n - 1);
+    match dir {
+        0 => (sel + n - 1) % n,
+        1 => (sel + 1) % n,
+        2 if sel >= cols => sel - cols,
+        2 => {
+            let c = ((n - 1) / cols) * cols + sel % cols; // same column on the last row
+            if c < n { c } else { c.saturating_sub(cols) }
+        }
+        _ if sel + cols < n => sel + cols,
+        _ => sel % cols,
+    }
+}
+
+/// `src` (width, height) scaled down to fit `bw` x `bh`, aspect ratio kept, never enlarged. (0, 0) for an unknown size.
+fn fit_in(src: (i32, i32), bw: i32, bh: i32) -> (i32, i32) {
+    if src.0 <= 0 || src.1 <= 0 || bw <= 0 || bh <= 0 {
+        return (0, 0);
+    }
+    let s = (bw as f32 / src.0 as f32).min(bh as f32 / src.1 as f32).min(1.0);
+    (((src.0 as f32 * s).round() as i32).max(1), ((src.1 as f32 * s).round() as i32).max(1))
+}
+
+/// `src` fitted into `b` and centered there (None for an unknown source size).
+fn fit_rect(src: (i32, i32), b: RECT) -> Option<RECT> {
+    let (tw, th) = fit_in(src, b.right - b.left, b.bottom - b.top);
+    (tw > 0).then(|| {
+        let (x, y) = (b.left + (b.right - b.left - tw) / 2, b.top + (b.bottom - b.top - th) / 2);
+        RECT { left: x, top: y, right: x + tw, bottom: y + th }
+    })
+}
+
+/// Puts the live DWM thumbnail `th` into `r` of its window (or hides it).
+unsafe fn thumb_set(th: isize, r: RECT, visible: bool) {
+    let p = DWM_THUMBNAIL_PROPERTIES {
+        dwFlags: DWM_TNP_RECTDESTINATION | DWM_TNP_VISIBLE | DWM_TNP_OPACITY,
+        rcDestination: r,
+        rcSource: zeroed(),
+        opacity: 255,
+        fVisible: visible as i32,
+        fSourceClientAreaOnly: 0,
+    };
+    DwmUpdateThumbnailProperties(th, &p);
+}
+
+/// Where card `k` sits in the switcher window.
+fn sw_card(k: usize) -> RECT {
+    let (cols, cw, ch) = SW_GRID.get();
+    let (c, r, pad) = (k as i32 % cols, k as i32 / cols, sc(SW_PAD));
+    // a short last row is centered under the others
+    let n = SW.with_borrow(|(v, _)| v.len()) as i32;
+    let last = ((n - 1).max(0) / cols) * cols;
+    let shift = if k as i32 >= last && n - last < cols { (cols - (n - last)) * cw / 2 } else { 0 };
+    RECT { left: pad + c * cw + shift, top: pad + r * ch, right: pad + (c + 1) * cw + shift, bottom: pad + (r + 1) * ch }
+}
+
+/// The card under (x, y) of the switcher window.
+fn sw_slot_at(x: i32, y: i32) -> Option<usize> {
+    let n = SW.with_borrow(|(v, _)| v.len());
+    (0..n).find(|&k| {
+        let c = sw_card(k);
+        x >= c.left && x < c.right && y >= c.top && y < c.bottom
+    })
+}
+
+/// The box of a card that holds the live preview (under the header strip).
+fn sw_thumb_box(c: RECT) -> RECT {
+    let g = sc(SW_GAP);
+    RECT { left: c.left + g, top: c.top + sc(SW_HEAD), right: c.right - g, bottom: c.bottom - g }
+}
+
+unsafe fn sw_drop_thumbs() {
+    THUMBS.with_borrow_mut(|t| t.drain(..).for_each(|th| { DwmUnregisterThumbnail(th); }));
+}
+
+/// A live DWM thumbnail of every window in the switcher, fitted into its card. A window DWM cannot show keeps just its big icon.
+unsafe fn sw_thumbs(sw: HWND) {
+    sw_drop_thumbs();
+    SW.with_borrow(|(v, _)| {
+        for (k, &w) in v.iter().enumerate() {
+            let mut th = 0isize;
+            if DwmRegisterThumbnail(sw, w, &mut th) != 0 {
+                continue;
+            }
+            let mut sz = SIZE { cx: 0, cy: 0 };
+            DwmQueryThumbnailSourceSize(th, &mut sz);
+            let Some(r) = fit_rect((sz.cx, sz.cy), sw_thumb_box(sw_card(k))) else {
+                DwmUnregisterThumbnail(th);
+                continue;
+            };
+            thumb_set(th, r, true);
+            THUMBS.with_borrow_mut(|t| t.push(th));
+        }
+    });
+}
+
+#[cfg(test)]
+mod switcher_tests {
+    use super::{fit_in, sw_grid, sw_move};
+    #[test]
+    fn rows_are_balanced_not_one_lone_card() {
+        // 5 windows where 4 fit per row: 3 + 2, not 4 + 1
+        assert_eq!(sw_grid(5, 1000, 900, 230, 110, 28, 6).0, 3);
+    }
+    #[test]
+    fn arrows_move_in_the_grid_and_wrap() {
+        // 7 cards on 3 columns: rows of 3, 3 and 1
+        assert_eq!(sw_move(6, 1, 3, 7), 0); // right wraps to the first
+        assert_eq!(sw_move(0, 0, 3, 7), 6); // left wraps to the last
+        assert_eq!(sw_move(0, 3, 3, 7), 3); // down
+        assert_eq!(sw_move(4, 3, 3, 7), 1); // down from the row before a short last row wraps to the top, same column
+        assert_eq!(sw_move(4, 2, 3, 7), 1); // up
+        assert_eq!(sw_move(1, 2, 3, 7), 4); // up from the top: last row has no card in column 1, so the row above
+        assert_eq!(sw_move(0, 2, 3, 7), 6); // up from the top, column 0: the lone last card
+    }
+    #[test]
+    fn few_windows_keep_full_size_cards_in_one_row() {
+        let (cols, cw, _) = sw_grid(3, 2000, 900, 230, 110, 28, 6);
+        assert_eq!((cols, cw), (3, 230));
+    }
+    #[test]
+    fn many_windows_shrink_cards_until_the_rows_fit() {
+        let (cols, cw, ch) = sw_grid(40, 1200, 600, 230, 110, 28, 6);
+        let rows = (40 + cols - 1) / cols;
+        assert!(rows * ch <= 600 || cw == 110, "cols={cols} cw={cw} ch={ch}");
+        assert!(cw < 230);
+    }
+    #[test]
+    fn preview_keeps_aspect_and_is_never_enlarged() {
+        assert_eq!(fit_in((1920, 1080), 200, 100), (178, 100));
+        assert_eq!(fit_in((100, 50), 400, 400), (100, 50));
+        assert_eq!(fit_in((0, 0), 200, 100), (0, 0));
+    }
+}
+
+/// Sizes the switcher window for the windows in `SW` and shows it (again) centered on its monitor, with fresh live thumbnails.
+unsafe fn sw_layout(sw: HWND) {
+    let n = SW.with_borrow(|(v, _)| v.len());
+    let mon = SW_MON.get();
+    let (scr, scr_h, pad) = (mon.right - mon.left, mon.bottom - mon.top, sc(SW_PAD));
+    let grid = sw_grid(n, scr - sc(80) - 2 * pad, scr_h - sc(120) - 2 * pad, sc(SW_CARD), sc(SW_MIN), sc(SW_HEAD), sc(SW_GAP));
+    SW_GRID.set(grid);
+    let (cols, cw, ch) = grid;
+    let rows = (n as i32 + cols - 1) / cols;
+    let (w, h) = (cols * cw + 2 * pad, rows * ch + 2 * pad);
+    SetWindowRgn(sw, CreateRoundRectRgn(0, 0, w + 1, h + 1, rr(18), rr(18)), 1);
+    SetWindowPos(sw, HWND_TOPMOST, mon.left + (scr - w) / 2, mon.top + (scr_h - h) / 2, w, h, SWP_NOACTIVATE | SWP_SHOWWINDOW);
+    sw_thumbs(sw);
+    InvalidateRect(sw, null(), 0);
+}
+
+/// An arrow key while the switcher is open (0 left, 1 right, 2 up, 3 down).
+unsafe fn alt_nav(dir: u8) {
+    let sw = SWWND.get();
+    if IsWindowVisible(sw) == 0 {
+        return;
+    }
+    let (cols, _, _) = SW_GRID.get();
+    SW.with_borrow_mut(|(v, i)| {
+        if !v.is_empty() {
+            *i = sw_move(*i, dir, cols, v.len());
+        }
+    });
+    InvalidateRect(sw, null(), 0);
+}
+
+/// Delete (or a middle click) while the switcher is open: closes the selected window and lays the rest out again.
+unsafe fn alt_close_sel() {
+    let sw = SWWND.get();
+    if IsWindowVisible(sw) == 0 {
+        return;
+    }
+    let w = SW.with_borrow_mut(|(v, i)| {
+        (!v.is_empty()).then(|| {
+            let w = v.remove(*i);
+            *i = (*i).min(v.len().saturating_sub(1));
+            w
+        })
+    });
+    let Some(w) = w else { return };
+    close_window(w);
+    if SW.with_borrow(|(v, _)| v.is_empty()) {
+        SWITCHING.store(false, Relaxed);
+        alt_done(true);
+    } else {
+        sw_layout(sw);
+    }
+}
 
 unsafe fn alt_tab(back: bool) {
     let sw = SWWND.get();
@@ -680,11 +903,11 @@ unsafe fn alt_tab(back: bool) {
             return SWITCHING.store(false, Relaxed);
         }
         SW.set((v, if n == 1 { 0 } else if back { n - 1 } else { 1 }));
-        let scr = mon.right - mon.left;
-        let w = (n as i32 * sc(SW_CELL)).min(scr - sc(80)) + 2 * sc(SW_PAD);
-        let h = sc(SW_PAD) + sc(SW_CELL) + sc(SW_TITLE) + sc(SW_PAD) / 2;
-        SetWindowRgn(sw, CreateRoundRectRgn(0, 0, w + 1, h + 1, rr(18), rr(18)), 1);
-        SetWindowPos(sw, HWND_TOPMOST, mon.left + (scr - w) / 2, mon.top + (mon.bottom - mon.top - h) / 2, w, h, SWP_NOACTIVATE | SWP_SHOWWINDOW);
+        SW_MON.set(mon);
+        let mut pt: POINT = zeroed();
+        GetCursorPos(&mut pt);
+        SW_PT.set((pt.x, pt.y));
+        sw_layout(sw);
     } else {
         SW.with_borrow_mut(|(v, i)| *i = if back { (*i + v.len() - 1) % v.len() } else { (*i + 1) % v.len() });
     }
@@ -693,6 +916,7 @@ unsafe fn alt_tab(back: bool) {
 
 /// Alt released: switch to the selected window (restored if minimized). Esc: just close.
 unsafe fn alt_done(cancel: bool) {
+    sw_drop_thumbs();
     ShowWindow(SWWND.get(), SW_HIDE);
     let (v, i) = SW.take();
     if let Some(&w) = v.get(i).filter(|_| !cancel) {
@@ -704,9 +928,52 @@ unsafe fn alt_done(cancel: bool) {
 }
 
 unsafe extern "system" fn sw_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
-    if msg != WM_PAINT {
-        return DefWindowProcW(hwnd, msg, wp, lp);
+    let (mx, my) = ((lp & 0xffff) as i16 as i32, (lp >> 16) as i16 as i32);
+    // sets the selection to the card under the pointer, true if there is one
+    let pick = |x: i32, y: i32| match sw_slot_at(x, y) {
+        Some(k) => {
+            SW.with_borrow_mut(|(_, i)| *i = k);
+            true
+        }
+        None => false,
+    };
+    match msg {
+        WM_PAINT => sw_paint(hwnd),
+        WM_MOUSEMOVE => {
+            // the window appearing under a resting pointer sends a move too: only a real move selects
+            let mut pt: POINT = zeroed();
+            GetCursorPos(&mut pt);
+            if SW_PT.replace((pt.x, pt.y)) != (pt.x, pt.y) {
+                let before = SW.with_borrow(|(_, i)| *i);
+                if pick(mx, my) && SW.with_borrow(|(_, i)| *i) != before {
+                    InvalidateRect(hwnd, null(), 0);
+                }
+            }
+            0
+        }
+        WM_LBUTTONDOWN => {
+            if pick(mx, my) {
+                SWITCHING.store(false, Relaxed);
+                keys(&[0xE8]); // Alt is still down: the app must not read its release as "open the menu bar"
+                alt_done(false);
+            }
+            0
+        }
+        WM_MBUTTONDOWN => {
+            if pick(mx, my) {
+                alt_close_sel();
+            }
+            0
+        }
+        WM_MOUSEWHEEL => {
+            alt_nav(if (wp >> 16) as i16 > 0 { 0 } else { 1 });
+            0
+        }
+        _ => DefWindowProcW(hwnd, msg, wp, lp),
     }
+}
+
+unsafe fn sw_paint(hwnd: HWND) -> LRESULT {
     let mut ps: PAINTSTRUCT = zeroed();
     let dc = BeginPaint(hwnd, &mut ps);
     let mut r: RECT = zeroed();
@@ -715,32 +982,39 @@ unsafe extern "system" fn sw_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
     let ob = SelectObject(mem, bmp);
     fill(mem, r, pal().line, sc(18));
     fill(mem, RECT { left: 1, top: 1, right: r.right - 1, bottom: r.bottom - 1 }, pal().bg, sc(18));
-    let pad = sc(SW_PAD);
     SW.with_borrow(|(v, sel)| {
-        let cell = (r.right - 2 * pad) / v.len().max(1) as i32;
-        let isz = sc(36).min(cell - sc(14)).max(sc(12));
+        let g = sc(SW_GAP);
+        let f = CreateFontW(-sc(13), 0, 0, 0, 600, 0, 0, 0, 1, 0, 0, 5, 0, wide(ui_face()).as_ptr());
+        let of = SelectObject(mem, f);
+        SetBkMode(mem, TRANSPARENT as i32);
         for (k, &w) in v.iter().enumerate() {
-            let x = pad + k as i32 * cell;
+            let c = sw_card(k);
+            let inner = RECT { left: c.left + sc(2), top: c.top + sc(2), right: c.right - sc(2), bottom: c.bottom - sc(2) };
             if k == *sel {
-                let c = RECT { left: x + sc(3), top: pad, right: x + cell - sc(3), bottom: pad + sc(SW_CELL) - sc(6) };
-                fill(mem, c, pal().accent, sc(12)); // accent ring around the selected window
-                fill(mem, RECT { left: c.left + sc(2), top: c.top + sc(2), right: c.right - sc(2), bottom: c.bottom - sc(2) }, pal().active, sc(10));
+                fill(mem, inner, pal().accent, sc(12)); // accent ring around the selected window
+                fill(mem, RECT { left: inner.left + sc(2), top: inner.top + sc(2), right: inner.right - sc(2), bottom: inner.bottom - sc(2) }, pal().active, sc(10));
             }
+            // header: small icon + title
             let ic = icon_of(w);
+            let isz = sc(18);
+            let head_h = sc(SW_HEAD);
+            let mut tx = c.left + g + sc(4);
             if !ic.is_null() {
-                DrawIconEx(mem, x + (cell - isz) / 2, pad + (sc(SW_CELL) - sc(6) - isz) / 2, ic, isz, isz, 0, null_mut(), DI_NORMAL);
+                DrawIconEx(mem, tx, c.top + (head_h - isz) / 2, ic, isz, isz, 0, null_mut(), DI_NORMAL);
+                tx += isz + sc(8);
             }
-        }
-        if let Some(&w) = v.get(*sel) {
             let mut b = [0u16; 256];
             let n = GetWindowTextW(w, b.as_mut_ptr(), 256).max(0) as usize;
-            let f = CreateFontW(-sc(14), 0, 0, 0, 600, 0, 0, 0, 1, 0, 0, 5, 0, wide(ui_face()).as_ptr());
-            let of = SelectObject(mem, f);
-            SetBkMode(mem, TRANSPARENT as i32);
-            text(mem, &String::from_utf16_lossy(&b[..n]), RECT { left: pad, top: pad + sc(SW_CELL) - sc(4), right: r.right - pad, bottom: pad + sc(SW_CELL) + sc(SW_TITLE) - sc(4) }, pal().text, DT_CENTER);
-            SelectObject(mem, of);
-            DeleteObject(f);
+            text(mem, &String::from_utf16_lossy(&b[..n]), RECT { left: tx, top: c.top, right: c.right - g - sc(4), bottom: c.top + head_h }, pal().text, DT_LEFT);
+            // the big icon under the preview: what stays visible when DWM has no picture of the window (e.g. minimized)
+            let tb = sw_thumb_box(c);
+            let big = sc(40).min(tb.bottom - tb.top).max(sc(12));
+            if !ic.is_null() {
+                DrawIconEx(mem, tb.left + (tb.right - tb.left - big) / 2, tb.top + (tb.bottom - tb.top - big) / 2, ic, big, big, 0, null_mut(), DI_NORMAL);
+            }
         }
+        SelectObject(mem, of);
+        DeleteObject(f);
     });
     BitBlt(dc, 0, 0, r.right, r.bottom, mem, 0, 0, SRCCOPY);
     SelectObject(mem, ob);
@@ -748,6 +1022,268 @@ unsafe extern "system" fn sw_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
     DeleteDC(mem);
     EndPaint(hwnd, &ps);
     0
+}
+
+// ---------- hover preview: the live thumbnails of an app button's windows above the bar; a row of cards, one wheel notch scrolls one card ----------
+
+struct Pv {
+    btn: i32,                       // the bar button it belongs to (-1: closed)
+    wins: Vec<HWND>,                // that button's windows
+    off: usize,                     // first visible card
+    cols: i32,                      // cards visible at once
+    cw: i32,                        // card width and height (scaled)
+    ch: i32,
+    hot: i32,                       // card under the pointer (absolute index), -1 none
+    thumbs: Vec<(isize, (i32, i32))>, // per window: DWM thumbnail (0 = none) and the source size
+}
+
+thread_local! {
+    static PVWND: Cell<HWND> = const { Cell::new(null_mut()) };
+    static PV: RefCell<Pv> = const { RefCell::new(Pv { btn: -1, wins: Vec::new(), off: 0, cols: 1, cw: 1, ch: 1, hot: -1, thumbs: Vec::new() }) };
+}
+
+/// How many cards fit in `max_w` (at least 1, at most `n`).
+fn pv_cols(n: usize, max_w: i32, cw: i32) -> i32 {
+    (max_w / cw.max(1)).clamp(1, n.max(1) as i32)
+}
+
+/// First visible card after scrolling by `delta` cards, kept so that the row stays full.
+fn pv_scroll(off: usize, delta: i32, n: usize, cols: i32) -> usize {
+    (off as i32 + delta).clamp(0, n.saturating_sub(cols as usize) as i32) as usize
+}
+
+/// Card in visible slot `slot`.
+fn pv_card(slot: i32) -> RECT {
+    let (cw, ch) = PV.with_borrow(|p| (p.cw, p.ch));
+    let pad = sc(SW_PAD);
+    RECT { left: pad + slot * cw, top: pad, right: pad + (slot + 1) * cw, bottom: pad + ch }
+}
+
+/// The small × in a card's header.
+fn pv_close_rect(c: RECT) -> RECT {
+    let (s, g) = (sc(20), sc(SW_GAP));
+    let top = c.top + (sc(SW_HEAD) - s) / 2;
+    RECT { left: c.right - g - s, top, right: c.right - g, bottom: top + s }
+}
+
+/// Absolute index of the card under (x, y) of the popup.
+fn pv_slot_at(x: i32, y: i32) -> Option<usize> {
+    let (off, cols, n) = PV.with_borrow(|p| (p.off, p.cols, p.wins.len()));
+    (0..cols).find_map(|s| {
+        let c = pv_card(s);
+        (x >= c.left && x < c.right && y >= c.top && y < c.bottom && off + (s as usize) < n).then_some(off + s as usize)
+    })
+}
+
+unsafe fn pv_drop_thumbs() {
+    PV.with_borrow_mut(|p| p.thumbs.drain(..).for_each(|(th, _)| if th != 0 { DwmUnregisterThumbnail(th); }));
+}
+
+/// Visible cards get their thumbnail fitted into the card, the others are hidden.
+unsafe fn pv_place_thumbs() {
+    PV.with_borrow(|p| {
+        for (i, &(th, src)) in p.thumbs.iter().enumerate() {
+            if th == 0 {
+                continue;
+            }
+            let slot = i as i32 - p.off as i32;
+            match fit_rect(src, sw_thumb_box(pv_card(slot.clamp(0, p.cols - 1)))) {
+                Some(r) if slot >= 0 && slot < p.cols => thumb_set(th, r, true),
+                _ => thumb_set(th, RECT { left: 0, top: 0, right: 1, bottom: 1 }, false),
+            }
+        }
+    });
+}
+
+unsafe fn hide_preview(bar: HWND) {
+    KillTimer(bar, 8);
+    pv_drop_thumbs();
+    PV.with_borrow_mut(|p| {
+        p.btn = -1;
+        p.wins.clear();
+        p.off = 0;
+        p.hot = -1;
+    });
+    ShowWindow(PVWND.get(), SW_HIDE);
+}
+
+/// Opens (or refreshes) the preview of bar button `h`. Does nothing for a button without windows.
+unsafe fn show_preview(bar: HWND, h: i32) {
+    let pw = PVWND.get();
+    let wins = BTNS.with_borrow(|b| b.get(h as usize).map(|b| b.wins.clone())).unwrap_or_default();
+    if wins.is_empty() || pw.is_null() {
+        return;
+    }
+    let off0 = PV.with_borrow(|p| if p.btn == h { p.off } else { 0 }); // a refresh of the same button keeps the scroll
+    pv_drop_thumbs();
+    let (pad, cw, scr) = (sc(SW_PAD), sc(SW_CARD), GetSystemMetrics(SM_CXSCREEN));
+    let ch = sc(SW_HEAD) + cw * 9 / 16 + sc(SW_GAP);
+    let cols = pv_cols(wins.len(), scr - sc(40) - 2 * pad, cw);
+    let off = pv_scroll(off0, 0, wins.len(), cols);
+    let bar_h_extra = if wins.len() as i32 > cols { sc(8) } else { 0 }; // room for the scroll indicator
+    let (w, hgt) = (cols * cw + 2 * pad, ch + 2 * pad + bar_h_extra);
+    let mut thumbs = Vec::with_capacity(wins.len());
+    for &win in &wins {
+        let (mut th, mut src) = (0isize, (0, 0));
+        if DwmRegisterThumbnail(pw, win, &mut th) == 0 {
+            let mut sz = SIZE { cx: 0, cy: 0 };
+            DwmQueryThumbnailSourceSize(th, &mut sz);
+            if sz.cx > 0 && sz.cy > 0 {
+                src = (sz.cx, sz.cy);
+            } else {
+                DwmUnregisterThumbnail(th);
+                th = 0;
+            }
+        } else {
+            th = 0;
+        }
+        thumbs.push((th, src));
+    }
+    PV.with_borrow_mut(|p| *p = Pv { btn: h, wins, off, cols, cw, ch, hot: -1, thumbs });
+    SetWindowRgn(pw, CreateRoundRectRgn(0, 0, w + 1, hgt + 1, rr(14), rr(14)), 1);
+    let cx = tip_cx(&bar_layout(bar), h);
+    if vert() {
+        let y = (cx - hgt / 2).clamp(sc(4), GetSystemMetrics(SM_CYSCREEN) - hgt - sc(4));
+        SetWindowPos(pw, HWND_TOPMOST, side_x(w), y, w, hgt, SWP_NOACTIVATE | SWP_SHOWWINDOW);
+    } else {
+        let x = (cx - w / 2).clamp(sc(4), scr - w - sc(4));
+        let y = if at_top() { bar_h() - bar_off() + sc(6) } else { bar_top() + bar_off() - hgt - sc(6) };
+        SetWindowPos(pw, HWND_TOPMOST, x, y, w, hgt, SWP_NOACTIVATE | SWP_SHOWWINDOW);
+    }
+    pv_place_thumbs();
+    InvalidateRect(pw, null(), 0);
+    SetTimer(bar, 8, 150, None); // keeps it while the pointer is on the button or the popup, drops it otherwise
+}
+
+unsafe fn pv_paint(hwnd: HWND) {
+    let mut ps: PAINTSTRUCT = zeroed();
+    let dc = BeginPaint(hwnd, &mut ps);
+    let mut r: RECT = zeroed();
+    GetClientRect(hwnd, &mut r);
+    let (mem, bmp) = (CreateCompatibleDC(dc), CreateCompatibleBitmap(dc, r.right, r.bottom));
+    let ob = SelectObject(mem, bmp);
+    fill(mem, r, pal().line, sc(14));
+    fill(mem, RECT { left: 1, top: 1, right: r.right - 1, bottom: r.bottom - 1 }, pal().bg, sc(14));
+    PV.with_borrow(|p| {
+        let g = sc(SW_GAP);
+        let f = CreateFontW(-sc(13), 0, 0, 0, 600, 0, 0, 0, 1, 0, 0, 5, 0, wide(ui_face()).as_ptr());
+        let of = SelectObject(mem, f);
+        SetBkMode(mem, TRANSPARENT as i32);
+        let fg = GetForegroundWindow();
+        for slot in 0..p.cols {
+            let i = p.off + slot as usize;
+            let Some(&w) = p.wins.get(i) else { break };
+            let c = pv_card(slot);
+            let hot = p.hot == i as i32;
+            if hot || w == fg {
+                fill(mem, RECT { left: c.left + sc(2), top: c.top + sc(2), right: c.right - sc(2), bottom: c.bottom - sc(2) }, if hot { pal().hover } else { pal().active }, sc(10));
+            }
+            let (ic, isz, head_h) = (icon_of(w), sc(18), sc(SW_HEAD));
+            let mut tx = c.left + g + sc(4);
+            if !ic.is_null() {
+                DrawIconEx(mem, tx, c.top + (head_h - isz) / 2, ic, isz, isz, 0, null_mut(), DI_NORMAL);
+                tx += isz + sc(8);
+            }
+            let mut b = [0u16; 256];
+            let n = GetWindowTextW(w, b.as_mut_ptr(), 256).max(0) as usize;
+            let right = if hot { pv_close_rect(c).left - sc(2) } else { c.right - g - sc(4) };
+            text(mem, &String::from_utf16_lossy(&b[..n]), RECT { left: tx, top: c.top, right, bottom: c.top + head_h }, pal().text, DT_LEFT);
+            if hot {
+                text(mem, "\u{00D7}", pv_close_rect(c), pal().text, DT_CENTER); // × closes this window
+            }
+            // the big icon under the thumbnail: stays visible when DWM has no picture (minimized window)
+            let tb = sw_thumb_box(c);
+            let big = sc(40).min(tb.bottom - tb.top).max(sc(12));
+            let ic = if ic.is_null() { win_icon(w) } else { ic };
+            DrawIconEx(mem, tb.left + (tb.right - tb.left - big) / 2, tb.top + (tb.bottom - tb.top - big) / 2, ic, big, big, 0, null_mut(), DI_NORMAL);
+        }
+        // scroll indicator when not every window fits
+        let n = p.wins.len() as i32;
+        if n > p.cols {
+            let (x0, x1, y) = (sc(SW_PAD), r.right - sc(SW_PAD), r.bottom - sc(SW_PAD) / 2 - sc(2));
+            fill(mem, RECT { left: x0, top: y, right: x1, bottom: y + sc(3) }, pal().line, sc(2));
+            let tw = (x1 - x0) * p.cols / n;
+            let tx = x0 + (x1 - x0) * p.off as i32 / n;
+            fill(mem, RECT { left: tx, top: y, right: tx + tw, bottom: y + sc(3) }, pal().accent, sc(2));
+        }
+        SelectObject(mem, of);
+        DeleteObject(f);
+    });
+    BitBlt(dc, 0, 0, r.right, r.bottom, mem, 0, 0, SRCCOPY);
+    SelectObject(mem, ob);
+    DeleteObject(bmp);
+    DeleteDC(mem);
+    EndPaint(hwnd, &ps);
+}
+
+unsafe extern "system" fn pv_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
+    let (mx, my) = ((lp & 0xffff) as i16 as i32, (lp >> 16) as i16 as i32);
+    match msg {
+        WM_PAINT => {
+            pv_paint(hwnd);
+            0
+        }
+        WM_MOUSEMOVE => {
+            let mut tme = TRACKMOUSEEVENT { cbSize: size_of::<TRACKMOUSEEVENT>() as u32, dwFlags: TME_LEAVE, hwndTrack: hwnd, dwHoverTime: 0 };
+            TrackMouseEvent(&mut tme);
+            let hot = pv_slot_at(mx, my).map_or(-1, |i| i as i32);
+            if PV.with_borrow_mut(|p| std::mem::replace(&mut p.hot, hot)) != hot {
+                InvalidateRect(hwnd, null(), 0);
+            }
+            0
+        }
+        WM_MOUSELEAVE => {
+            PV.with_borrow_mut(|p| p.hot = -1);
+            InvalidateRect(hwnd, null(), 0);
+            0
+        }
+        WM_MOUSEWHEEL => {
+            // one notch = one card; the row stays full at both ends
+            let step = if (wp >> 16) as i16 > 0 { -1 } else { 1 };
+            PV.with_borrow_mut(|p| p.off = pv_scroll(p.off, step, p.wins.len(), p.cols));
+            pv_place_thumbs();
+            InvalidateRect(hwnd, null(), 0);
+            0
+        }
+        WM_LBUTTONDOWN | WM_MBUTTONDOWN => {
+            if let Some(i) = pv_slot_at(mx, my) {
+                let (w, slot) = PV.with_borrow(|p| (p.wins.get(i).copied(), i as i32 - p.off as i32));
+                if let Some(w) = w {
+                    let c = pv_close_rect(pv_card(slot));
+                    if msg == WM_MBUTTONDOWN || (mx >= c.left && mx < c.right && my >= c.top && my < c.bottom) {
+                        close_window(w); // middle click or the ×: the list refreshes by itself
+                    } else {
+                        if IsIconic(w) != 0 {
+                            ShowWindow(w, SW_RESTORE);
+                        }
+                        force_fg(w);
+                        hide_preview(BAR.load(Relaxed) as HWND);
+                    }
+                }
+            }
+            0
+        }
+        _ => DefWindowProcW(hwnd, msg, wp, lp),
+    }
+}
+
+#[cfg(test)]
+mod preview_tests {
+    use super::{pv_cols, pv_scroll};
+    #[test]
+    fn cards_that_fit_are_at_least_one_and_at_most_all() {
+        assert_eq!(pv_cols(3, 2000, 230), 3);
+        assert_eq!(pv_cols(30, 1000, 230), 4);
+        assert_eq!(pv_cols(30, 100, 230), 1);
+        assert_eq!(pv_cols(0, 1000, 230), 1);
+    }
+    #[test]
+    fn scrolling_stops_at_both_ends_with_a_full_row() {
+        assert_eq!(pv_scroll(0, -1, 10, 4), 0);
+        assert_eq!(pv_scroll(0, 1, 10, 4), 1);
+        assert_eq!(pv_scroll(6, 1, 10, 4), 6); // 10 cards, 4 visible: the last first-card is 6
+        assert_eq!(pv_scroll(3, 0, 2, 2), 0);
+    }
 }
 
 unsafe fn hide_tip(bar: HWND) {
@@ -847,7 +1383,10 @@ unsafe fn place(hwnd: HWND) {
     SHAppBarMessage(ABM_SETPOS, &mut ab);
     // No explorer (rs-shell / rust-explorer): nobody handles appbars, so set the work area ourselves. Without it maximized
     // windows slide under the bar and, covering the whole monitor, count as "fullscreen" and hide the bar.
-    if find_other("Shell_TrayWnd").is_null() {
+    // With explorer too: its appbar bookkeeping can silently leave the full screen as work area (hidden auto-hide taskbar, forwarded
+    // ABM calls), and then the bottom of every maximized window sits under the bar. So when a strip is due (or we set one before), set it ourselves.
+    if strip > 0 || WA_SET.load(Relaxed) || find_other("Shell_TrayWnd").is_null() {
+        WA_SET.store(strip > 0, Relaxed);
         set_work_area(if vert() { if ab.uEdge == ABE_LEFT { RECT { left: ab.rc.right, top: 0, right: cx, bottom: cy } } else { RECT { left: 0, top: 0, right: ab.rc.left, bottom: cy } } } else if at_top() { RECT { left: 0, top: ab.rc.bottom, right: cx, bottom: cy } } else { RECT { left: 0, top: 0, right: cx, bottom: ab.rc.top } });
     }
     let (x, w) = bar_x_w();
@@ -861,11 +1400,54 @@ unsafe fn place(hwnd: HWND) {
     InvalidateRect(hwnd, null(), 0);
 }
 
+/// (x, y, width, height) a maximized window must have for the work area `work`: it overhangs the work area by its invisible frame
+/// `f` on every side (the frame is how far its left edge `left` sits outside the monitor's `mon_left`).
+fn maximized_target(mon_left: i32, left: i32, work: RECT) -> (i32, i32, i32, i32) {
+    let f = (mon_left - left).max(0);
+    (work.left - f, work.top - f, work.right - work.left + 2 * f, work.bottom - work.top + 2 * f)
+}
+
+/// Windows that were maximized before the work area changed keep their old size (Zed, some Electron apps do not re-fit by themselves)
+/// and then sit under the bar: size them to the new work area. A size change only: no restore / maximize flicker, no focus change.
+unsafe fn refit_maximized() {
+    unsafe extern "system" fn each(h: HWND, _: LPARAM) -> i32 {
+        let mut pid = 0u32;
+        GetWindowThreadProcessId(h, &mut pid);
+        if IsWindowVisible(h) == 0 || IsZoomed(h) == 0 || pid == std::process::id() {
+            return 1;
+        }
+        let mut cls = [0u16; 32];
+        let n = GetClassNameW(h, cls.as_mut_ptr(), 32).max(0) as usize;
+        if String::from_utf16_lossy(&cls[..n]) == "RustExplorer" {
+            return 1; // the desktop window of rust-explorer fills the screen by design
+        }
+        let (mut r, mut mi): (RECT, MONITORINFO) = (zeroed(), zeroed());
+        mi.cbSize = size_of::<MONITORINFO>() as u32;
+        GetWindowRect(h, &mut r);
+        if GetMonitorInfoW(MonitorFromWindow(h, MONITOR_DEFAULTTONEAREST), &mut mi) == 0 || mi.dwFlags & MONITORINFOF_PRIMARY == 0 {
+            return 1; // the work area we change is the primary monitor's
+        }
+        let (x, y, w, hgt) = maximized_target(mi.rcMonitor.left, r.left, mi.rcWork);
+        if (r.left, r.top, r.right - r.left, r.bottom - r.top) != (x, y, w, hgt) {
+            SetWindowPos(h, null_mut(), x, y, w, hgt, SWP_NOZORDER | SWP_NOACTIVATE);
+        }
+        1
+    }
+    EnumWindows(Some(each), 0);
+}
+
+/// True while the bar itself holds the work area's strip (so exit / auto-hide must give it back even with explorer running).
+static WA_SET: AtomicBool = AtomicBool::new(false);
+
 unsafe fn set_work_area(mut want: RECT) {
     let mut cur: RECT = zeroed();
     SystemParametersInfoW(SPI_GETWORKAREA, 0, &mut cur as *mut _ as *mut _, 0);
     if (cur.left, cur.top, cur.right, cur.bottom) != (want.left, want.top, want.right, want.bottom) {
-        SystemParametersInfoW(SPI_SETWORKAREA, 0, &mut want as *mut _ as *mut _, SPIF_SENDCHANGE);
+        // SPIF_SENDCHANGE broadcasts WM_SETTINGCHANGE synchronously and waits for every top-level window: one slow or hung app
+        // stalled the bar's start for seconds. Set it silently and post the same notice instead.
+        SystemParametersInfoW(SPI_SETWORKAREA, 0, &mut want as *mut _ as *mut _, 0);
+        PostMessageW(HWND_BROADCAST, WM_SETTINGCHANGE, SPI_SETWORKAREA as usize, 0);
+        refit_maximized();
     }
 }
 
@@ -1000,13 +1582,47 @@ thread_local! {
 /// Apps run by a generic host (Store apps in ApplicationFrameHost, Java games in javaw, scripts in python...) would all
 /// get the host's icon: those keep the window's own icon.
 unsafe fn win_icon(w: HWND) -> HICON {
+    let ic = win_icon_or_null(w);
+    // never a blank button: an elevated app we cannot read, a window without an icon... get the generic application icon
+    if ic.is_null() { LoadIconW(null_mut(), IDI_APPLICATION) } else { ic }
+}
+
+unsafe fn win_icon_or_null(w: HWND) -> HICON {
     let exe = exe_of(w);
     const HOSTS: [&str; 8] = ["applicationframehost.exe", "javaw.exe", "java.exe", "pythonw.exe", "python.exe", "mmc.exe", "rundll32.exe", "dllhost.exe"];
+    if exe.rsplit('\\').next() == Some("applicationframehost.exe") {
+        let ic = uwp_icon(w);
+        return if ic.is_null() { icon_of(w) } else { ic };
+    }
     if exe.is_empty() || HOSTS.iter().any(|h| exe.rsplit('\\').next() == Some(*h)) {
         return icon_of(w);
     }
     let ic = EXE_ICONS.with_borrow_mut(|m| *m.entry(exe.clone()).or_insert_with(|| item_icon(&exe, icon_px())));
     if ic.is_null() { icon_of(w) } else { ic }
+}
+
+/// Store apps (Calculator, Settings...) run inside ApplicationFrameHost and their frame window has no icon. The app's own process
+/// (the frame's CoreWindow child) knows its AppUserModelID, and the shell renders the tile icon for "shell:AppsFolder\<id>".
+unsafe fn uwp_icon(frame: HWND) -> HICON {
+    use windows_sys::Win32::Storage::Packaging::Appx::GetApplicationUserModelId;
+    let core = FindWindowExW(frame, null_mut(), wide("Windows.UI.Core.CoreWindow").as_ptr(), null());
+    if core.is_null() {
+        return null_mut();
+    }
+    let mut pid = 0u32;
+    GetWindowThreadProcessId(core, &mut pid);
+    let p = OpenProcess(0x1000, 0, pid);
+    if p.is_null() {
+        return null_mut();
+    }
+    let (mut b, mut n) = ([0u16; 130], 130u32);
+    let rc = GetApplicationUserModelId(p, &mut n, b.as_mut_ptr());
+    CloseHandle(p);
+    if rc != 0 {
+        return null_mut();
+    }
+    let id = wstr_of(&b);
+    EXE_ICONS.with_borrow_mut(|m| *m.entry(format!("aumid:{id}")).or_insert_with(|| item_icon(&format!(r"shell:AppsFolder\{id}"), icon_px())))
 }
 
 /// "c:\program files\windowsapps\claude_5.1.0.0_x64__pzs8\app\claude.exe" -> ("claude_pzs8", "app\claude.exe"):
@@ -1056,6 +1672,58 @@ unsafe fn fix_msix_pin(lnk: &[u16], target: &str) -> Option<String> {
     Some(new)
 }
 
+/// HKCU\...\Explorer\Taskband\Favorites: the binary list of the taskbar's pins (empty when missing).
+unsafe fn taskband_blob() -> Vec<u8> {
+    use windows_sys::Win32::System::Registry::{HKEY_CURRENT_USER, RRF_RT_REG_BINARY, RegGetValueW};
+    let (key, val) = (wide(r"Software\Microsoft\Windows\CurrentVersion\Explorer\Taskband"), wide("Favorites"));
+    let mut len = 0u32;
+    if RegGetValueW(HKEY_CURRENT_USER, key.as_ptr(), val.as_ptr(), RRF_RT_REG_BINARY, null_mut(), null_mut(), &mut len) != 0 || len == 0 {
+        return Vec::new();
+    }
+    let mut buf = vec![0u8; len as usize];
+    if RegGetValueW(HKEY_CURRENT_USER, key.as_ptr(), val.as_ptr(), RRF_RT_REG_BINARY, null_mut(), buf.as_mut_ptr().cast(), &mut len) != 0 {
+        return Vec::new();
+    }
+    buf.truncate(len as usize);
+    buf
+}
+
+/// Byte offset of `name` (UTF-16LE, at any alignment) in the Taskband blob: the pin's place in Windows' taskbar order.
+fn utf16_pos(blob: &[u8], name: &str) -> Option<usize> {
+    let needle: Vec<u8> = name.encode_utf16().flat_map(u16::to_le_bytes).collect();
+    if needle.is_empty() { None } else { blob.windows(needle.len()).position(|w| w == needle.as_slice()) }
+}
+
+#[cfg(test)]
+mod refit_tests {
+    use super::{RECT, maximized_target};
+    #[test]
+    fn maximized_window_overhangs_the_work_area_by_its_frame() {
+        let work = RECT { left: 0, top: 0, right: 2560, bottom: 1040 };
+        assert_eq!(maximized_target(0, -8, work), (-8, -8, 2576, 1056)); // bottom edge at 1048 = work bottom + frame
+        assert_eq!(maximized_target(0, 0, work), (0, 0, 2560, 1040)); // no frame overhang: exactly the work area
+    }
+}
+
+#[cfg(test)]
+mod pin_order_tests {
+    use super::utf16_pos;
+    fn u16le(s: &str) -> Vec<u8> {
+        s.encode_utf16().flat_map(u16::to_le_bytes).collect()
+    }
+    #[test]
+    fn finds_names_at_odd_and_even_offsets_in_blob_order() {
+        let mut blob = vec![0u8, 1, 2];
+        blob.extend(u16le("Brave.lnk")); // odd offset
+        blob.extend([9u8, 9]);
+        blob.extend(u16le("Discord.lnk"));
+        let (b, d) = (utf16_pos(&blob, "Brave.lnk").unwrap(), utf16_pos(&blob, "Discord.lnk").unwrap());
+        assert!(b < d);
+        assert_eq!(utf16_pos(&blob, "Steam.lnk"), None);
+        assert_eq!(utf16_pos(&blob, ""), None);
+    }
+}
+
 fn pin_order_file() -> PathBuf {
     appdata_file("topbar-pin-order.txt")
 }
@@ -1073,7 +1741,10 @@ unsafe fn load_pins() {
     let dir = PathBuf::from(appdata).join(r"Microsoft\Internet Explorer\Quick Launch\User Pinned\TaskBar");
     let mut files: Vec<_> = std::fs::read_dir(dir).into_iter().flatten().flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|e| e.eq_ignore_ascii_case("lnk"))).collect();
     files.sort();
-    files.sort_by_key(|f| std::cmp::Reverse(lnk_uses(f))); // most used first (stable: ties stay alphabetical)
+    // Windows' own order of the pins (Taskband\Favorites lists the .lnk names in taskbar order); pins it does not list (made by the
+    // bar itself) come after, most used first
+    let band = taskband_blob();
+    files.sort_by_key(|f| (utf16_pos(&band, &f.file_name().unwrap_or_default().to_string_lossy()).unwrap_or(usize::MAX), std::cmp::Reverse(lnk_uses(f))));
     // an order the user set (Move left / right) wins; pins not in it keep the order above, after the listed ones
     let order: Vec<String> = std::fs::read_to_string(pin_order_file()).unwrap_or_default().lines().map(|l| l.to_lowercase()).collect();
     files.sort_by_key(|f| order.iter().position(|n| *n == f.file_name().unwrap_or_default().to_string_lossy().to_lowercase()).unwrap_or(usize::MAX));
@@ -1107,11 +1778,26 @@ fn refresh_buttons() {
             None => loose.push(w),
         }
     }
+    // a running pin also carries its window's icon: the draw code falls back to it when the shortcut's own icon is missing
+    for b in btns.iter_mut().skip(1).filter(|b| b.pin.is_some()) {
+        if let Some(&w) = b.wins.first() {
+            b.icon = unsafe { win_icon(w) };
+        }
+    }
     // EnumWindows lists by z-order, so clicking a window would jump its button to the front: keep the order they first appeared in
     ORDER.with_borrow_mut(|o| {
         o.retain(|w| loose.contains(w));
         o.extend(loose.iter().filter(|w| !o.contains(w)).copied().collect::<Vec<_>>());
-        btns.extend(o.iter().map(|&w| Btn { pin: None, wins: vec![w], icon: unsafe { win_icon(w) } }));
+        // like the Windows taskbar's default ("always combine"): the windows of one program share one button, which sits where its first window opened
+        let mut groups: Vec<(String, Vec<HWND>)> = Vec::new();
+        for &w in o.iter() {
+            let exe = unsafe { exe_of(w) };
+            match groups.iter_mut().find(|g| !exe.is_empty() && g.0 == exe) {
+                Some(g) => g.1.push(w),
+                None => groups.push((exe, vec![w])),
+            }
+        }
+        btns.extend(groups.into_iter().map(|(_, wins)| Btn { pin: None, icon: unsafe { win_icon(wins[0]) }, wins }));
     });
     BTNS.set(btns);
 }
@@ -1541,6 +2227,10 @@ unsafe fn fullscreen_now(bar: HWND) -> bool {
     if matches!(String::from_utf16_lossy(&cls[..n]).as_str(), "Progman" | "WorkerW" | "Shell_TrayWnd" | "Shell_SecondaryTrayWnd" | "RustExplorer") {
         return false; // the desktop itself is full size (rs-shell's desktop is a rust-explorer window; a file manager is never "fullscreen")
     }
+    // a window with a title bar is just a big window (e.g. Zed or a maximized app with its own frame: -8,-8 over the whole monitor), never a game or video
+    if GetWindowLongW(fg, GWL_STYLE) as u32 & WS_CAPTION == WS_CAPTION {
+        return false;
+    }
     let mut r: RECT = zeroed();
     GetWindowRect(fg, &mut r);
     let mut mi: MONITORINFO = zeroed();
@@ -1579,6 +2269,7 @@ unsafe fn fs_update(hwnd: HWND) {
         if fs {
             fly::close_now();
             hide_tip(hwnd);
+            hide_preview(hwnd);
         }
         bar_anim(hwnd);
     }
@@ -1730,6 +2421,29 @@ unsafe extern "system" fn kb_hook(n: i32, w: WPARAM, l: LPARAM) -> LRESULT {
                 return 1;
             }
             if SWITCHING.load(Relaxed) {
+                // the switcher is a grid: arrows move in it, Delete closes the selected window, Enter confirms (none of them reach the app)
+                if down {
+                    let dir = match k.vkCode as u16 {
+                        VK_LEFT => Some(0),
+                        VK_RIGHT => Some(1),
+                        VK_UP => Some(2),
+                        VK_DOWN => Some(3),
+                        _ => None,
+                    };
+                    if let Some(d) = dir {
+                        PostMessageW(bar, ALT_NAV, d, 0);
+                        return 1;
+                    }
+                    if k.vkCode == VK_DELETE as u32 {
+                        PostMessageW(bar, ALT_CLOSE, 0, 0);
+                        return 1;
+                    }
+                    if k.vkCode == VK_RETURN as u32 {
+                        SWITCHING.store(false, Relaxed);
+                        PostMessageW(bar, ALT_ENTER, 0, 0);
+                        return 1;
+                    }
+                }
                 if k.vkCode == VK_ESCAPE as u32 && down {
                     SWITCHING.store(false, Relaxed);
                     PostMessageW(bar, ALT_UP, 1, 0);
@@ -2035,7 +2749,11 @@ unsafe fn paint_vert(dc: HDC, cr: RECT, fonts: [HFONT; 4]) {
                 continue;
             }
             let ic = match b.pin {
-                Some(p) => PINS.with_borrow(|pins| pins.get(p).map_or(null_mut(), |p| p.icon)),
+                // a pin whose shortcut icon could not be loaded falls back to its running window's icon
+                Some(p) => {
+                    let pi = PINS.with_borrow(|pins| pins.get(p).map_or(null_mut(), |p| p.icon));
+                    if pi.is_null() { b.icon } else { pi }
+                }
                 None => b.icon,
             };
             let key = b.pin.map(|p| -(p as isize) - 1).or_else(|| b.wins.first().map(|&w| w as isize)).unwrap_or(0);
@@ -2192,7 +2910,11 @@ unsafe fn paint(hwnd: HWND) {
                 continue;
             }
             let ic = match b.pin {
-                Some(p) => PINS.with_borrow(|pins| pins.get(p).map_or(null_mut(), |p| p.icon)),
+                // a pin whose shortcut icon could not be loaded falls back to its running window's icon
+                Some(p) => {
+                    let pi = PINS.with_borrow(|pins| pins.get(p).map_or(null_mut(), |p| p.icon));
+                    if pi.is_null() { b.icon } else { pi }
+                }
                 None => b.icon,
             };
             let key = b.pin.map(|p| -(p as isize) - 1).or_else(|| b.wins.first().map(|&w| w as isize)).unwrap_or(0);
@@ -3092,7 +3814,31 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
             KillTimer(hwnd, 2);
             let h = HOT.get();
             if h != NONE && !fly::any_open() {
-                show_tip(tip_text(h), tip_cx(&bar_layout(hwnd), h));
+                // a button with open windows gets the live preview of them; anything else the plain text tip
+                if h >= 1 && BTNS.with_borrow(|b| b.get(h as usize).is_some_and(|b| !b.wins.is_empty())) {
+                    show_preview(hwnd, h);
+                } else {
+                    hide_preview(hwnd);
+                    show_tip(tip_text(h), tip_cx(&bar_layout(hwnd), h));
+                }
+            }
+        }
+        WM_TIMER if wp == 8 => {
+            // the preview stays while the pointer is on its button or on the popup (the gap between them included)
+            let pw = PVWND.get();
+            let (mut pt, mut r): (POINT, RECT) = (zeroed(), zeroed());
+            GetCursorPos(&mut pt);
+            GetWindowRect(pw, &mut r);
+            InflateRect(&mut r, 0, sc(10));
+            let btn = PV.with_borrow(|p| p.btn);
+            if IsWindowVisible(pw) == 0 || fly::any_open() || (PtInRect(&r, pt) == 0 && HOT.get() != btn) {
+                hide_preview(hwnd);
+            } else if btn >= 0 {
+                // windows opened or closed meanwhile: rebuild (an emptied button closes the preview)
+                let now = BTNS.with_borrow(|b| b.get(btn as usize).map(|b| b.wins.clone())).unwrap_or_default();
+                if PV.with_borrow(|p| p.wins != now) {
+                    if now.is_empty() { hide_preview(hwnd) } else { show_preview(hwnd, btn) }
+                }
             }
         }
         WM_TIMER if wp == 6 => hide_tip(hwnd), // the volume readout after a wheel turn
@@ -3122,6 +3868,12 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
         WIN_NUM => win_num(wp),
         NEXT_LANG => next_lang(hwnd, wp == 1),
         ALT_UP => alt_done(wp == 1),
+        ALT_NAV => alt_nav(wp as u8),
+        ALT_CLOSE => alt_close_sel(),
+        ALT_ENTER => {
+            keys(&[0xE8]); // Alt is still down: the app must not read its release as "open the menu bar"
+            alt_done(false);
+        }
         SNIP if wp == 1 => screenshot_notice(hwnd),
         SNIP if wp == 2 => clip_notice(hwnd),
         SNIP => clip::start(),
@@ -3153,7 +3905,8 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
             if HOT.replace(h) != h {
                 hide_tip(hwnd);
                 if h != NONE {
-                    SetTimer(hwnd, 2, 450, None);
+                    // moving between buttons while a preview is open switches it almost at once, like the Windows taskbar
+                    SetTimer(hwnd, 2, if PV.with_borrow(|p| p.btn) >= 0 { 80 } else { 450 }, None);
                 }
                 InvalidateRect(hwnd, null(), 0);
             }
@@ -3177,7 +3930,12 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
             let x = (lp & 0xffff) as i16 as i32;
             let h = hit(hwnd, x, (lp >> 16) as i16 as i32);
             let x = if vert() { (lp >> 16) as i16 as i32 } else { x }; // position along the bar
+            // a left click on an app with several windows opens the list of them (live previews, wheel scrolls) instead of raising one
+            let multi = msg == WM_LBUTTONDOWN && h >= 1 && BTNS.with_borrow(|b| b.get(h as usize).is_some_and(|b| b.wins.len() > 1));
             hide_tip(hwnd);
+            if !multi {
+                hide_preview(hwnd);
+            }
             if h != NONE {
                 press(h);
             }
@@ -3185,6 +3943,8 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                 fly::context_menu(x); // right click on an empty spot
             } else if h >= 1 && msg == WM_RBUTTONDOWN {
                 app_menu(hwnd, h);
+            } else if multi {
+                show_preview(hwnd, h);
             } else {
                 click(h, msg == WM_LBUTTONDOWN, msg == WM_MBUTTONDOWN);
             }
@@ -3203,8 +3963,9 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
             ab.cbSize = size_of::<APPBARDATA>() as u32;
             ab.hWnd = hwnd;
             SHAppBarMessage(ABM_REMOVE, &mut ab);
-            if find_other("Shell_TrayWnd").is_null() {
-                set_work_area(RECT { left: 0, top: 0, right: GetSystemMetrics(SM_CXSCREEN), bottom: GetSystemMetrics(SM_CYSCREEN) }); // ours: give the strip back
+            if WA_SET.load(Relaxed) || find_other("Shell_TrayWnd").is_null() {
+                // ours: give the strip back first; show_taskbar below makes explorer recompute its own
+                set_work_area(RECT { left: 0, top: 0, right: GetSystemMetrics(SM_CXSCREEN), bottom: GetSystemMetrics(SM_CYSCREEN) });
             }
             show_taskbar(OLD_STATE.get());
             forget_taskbar_state();
@@ -3220,11 +3981,10 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
 fn main() {
     unsafe {
         if std::env::args().any(|a| a == "--restore") {
+            // a killed bar's reserved strip goes first: showing the taskbar then makes explorer recompute its own
+            set_work_area(RECT { left: 0, top: 0, right: GetSystemMetrics(SM_CXSCREEN), bottom: GetSystemMetrics(SM_CYSCREEN) });
             show_taskbar(saved_taskbar_state().unwrap_or(ABS_ALWAYSONTOP as usize));
             forget_taskbar_state();
-            if find_other("Shell_TrayWnd").is_null() {
-                set_work_area(RECT { left: 0, top: 0, right: GetSystemMetrics(SM_CXSCREEN), bottom: GetSystemMetrics(SM_CYSCREEN) }); // a killed bar's reserved strip
-            }
             announce(); // a killed bar took its tray icons with it; apps re-register with explorer
             return;
         }
@@ -3304,8 +4064,11 @@ fn main() {
         let tipc = wide("topbar_tip");
         RegisterClassW(&WNDCLASSW { lpfnWndProc: Some(tip_proc), hInstance: hi, lpszClassName: tipc.as_ptr(), ..zeroed() });
         TIPWND.set(CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_NOACTIVATE, tipc.as_ptr(), null(), WS_POPUP, 0, 0, 1, 1, null_mut(), null_mut(), hi, null()));
+        let pvc = wide("topbar_preview");
+        RegisterClassW(&WNDCLASSW { lpfnWndProc: Some(pv_proc), hInstance: hi, hCursor: LoadCursorW(null_mut(), IDC_ARROW), lpszClassName: pvc.as_ptr(), ..zeroed() });
+        PVWND.set(CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_NOACTIVATE, pvc.as_ptr(), null(), WS_POPUP, 0, 0, 1, 1, null_mut(), null_mut(), hi, null()));
         let swc = wide("topbar_alttab");
-        RegisterClassW(&WNDCLASSW { lpfnWndProc: Some(sw_proc), hInstance: hi, lpszClassName: swc.as_ptr(), ..zeroed() });
+        RegisterClassW(&WNDCLASSW { lpfnWndProc: Some(sw_proc), hInstance: hi, hCursor: LoadCursorW(null_mut(), IDC_ARROW), lpszClassName: swc.as_ptr(), ..zeroed() });
         SWWND.set(CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_NOACTIVATE, swc.as_ptr(), null(), WS_POPUP, 0, 0, 1, 1, null_mut(), null_mut(), hi, null()));
         OLD_STATE.set(remember_taskbar_state());
         appbar_new(hwnd);
