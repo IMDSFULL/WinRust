@@ -22,7 +22,7 @@ If UAC asks for **another administrator's** password, the per-user settings (sta
 
 **Update:** download the new `WinRust.exe` from the releases page, run it as administrator and select the components you want to update or install. An existing `rust-explorer` stays selected by default for updates. Your settings and the saved original Windows values stay.
 
-The installer is in English. The **Русский** button in its corner (or "WinRust apps in Русский" in the bar's right-click menu) switches every WinRust program to Russian.
+The installer is in English. The language button in its corner (it offers **Português**, then **Русский**, then English again; the "WinRust apps in ..." item in the bar's right-click menu does the same) switches every WinRust program between English, Brazilian Portuguese and Russian.
 
 ## Remove
 

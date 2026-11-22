@@ -20,11 +20,11 @@ struct Source {
 }
 
 static SOURCES: std::sync::LazyLock<[Source; 5]> = std::sync::LazyLock::new(|| [
-    Source { label: t!("Реестр, текущий пользователь", "Registry, current user"), hklm: false, run: Some(RUN), approved: "Run" },
-    Source { label: t!("Реестр, все пользователи", "Registry, all users"), hklm: true, run: Some(RUN), approved: "Run" },
-    Source { label: t!("Реестр, все пользователи (32-бит)", "Registry, all users (32-bit)"), hklm: true, run: Some(RUN32), approved: "Run32" },
-    Source { label: t!("Папка автозагрузки (пользователь)", "Startup folder (user)"), hklm: false, run: None, approved: "StartupFolder" },
-    Source { label: t!("Папка автозагрузки (все)", "Startup folder (all users)"), hklm: true, run: None, approved: "StartupFolder" },
+    Source { label: t!("Реестр, текущий пользователь", "Registry, current user", "Registro, usuário atual"), hklm: false, run: Some(RUN), approved: "Run" },
+    Source { label: t!("Реестр, все пользователи", "Registry, all users", "Registro, todos os usuários"), hklm: true, run: Some(RUN), approved: "Run" },
+    Source { label: t!("Реестр, все пользователи (32-бит)", "Registry, all users (32-bit)", "Registro, todos os usuários (32 bits)"), hklm: true, run: Some(RUN32), approved: "Run32" },
+    Source { label: t!("Папка автозагрузки (пользователь)", "Startup folder (user)", "Pasta Inicializar (usuário)"), hklm: false, run: None, approved: "StartupFolder" },
+    Source { label: t!("Папка автозагрузки (все)", "Startup folder (all users)", "Pasta Inicializar (todos os usuários)"), hklm: true, run: None, approved: "StartupFolder" },
 ]);
 
 pub struct Item {
@@ -42,8 +42,8 @@ pub const SERVICE: usize = 6;
 impl Item {
     pub fn source_label(&self) -> &'static str {
         match self.source {
-            TASK => t!("Планировщик заданий (при входе или загрузке)", "Task Scheduler (at sign-in or boot)"),
-            SERVICE => t!("Служба с автозапуском (отключение = запуск вручную)", "Auto-start service (disabling = manual start)"),
+            TASK => t!("Планировщик заданий (при входе или загрузке)", "Task Scheduler (at sign-in or boot)", "Agendador de Tarefas (no logon ou na inicialização)"),
+            SERVICE => t!("Служба с автозапуском (отключение = запуск вручную)", "Auto-start service (disabling = manual start)", "Serviço de início automático (desativar = início manual)"),
             i => SOURCES[i].label,
         }
     }

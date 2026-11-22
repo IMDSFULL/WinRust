@@ -47,28 +47,28 @@ impl Id {
     }
     pub fn title(self) -> &'static str {
         match self {
-            Id::Game => t!("Профиль «Игра»", "'Game' profile"),
-            Id::Work => t!("Профиль «Работа»", "'Work' profile"),
-            Id::MemNow => t!("Очистить кэш памяти сейчас", "Clear memory cache now"),
-            Id::MemAuto => t!("Очищать кэш памяти при нехватке", "Clear memory cache when it runs short"),
-            Id::Shell => t!("Не запускать лишние процессы оболочки", "Block unneeded shell processes"),
-            Id::Updaters => t!("Один обновлятор через winget", "One updater through winget"),
-            Id::Defender => t!("Исключения Defender для сборок и игр", "Defender exclusions for builds and games"),
-            Id::Ntfs => t!("Быстрее NTFS", "Faster NTFS"),
-            Id::Dns => t!("Блокировать рекламу (hosts)", "Block ads (hosts)"),
+            Id::Game => t!("Профиль «Игра»", "'Game' profile", "Perfil 'Jogo'"),
+            Id::Work => t!("Профиль «Работа»", "'Work' profile", "Perfil 'Trabalho'"),
+            Id::MemNow => t!("Очистить кэш памяти сейчас", "Clear memory cache now", "Limpar cache de memória agora"),
+            Id::MemAuto => t!("Очищать кэш памяти при нехватке", "Clear memory cache when it runs short", "Limpar cache de memória quando faltar"),
+            Id::Shell => t!("Не запускать лишние процессы оболочки", "Block unneeded shell processes", "Bloquear processos de shell desnecessários"),
+            Id::Updaters => t!("Один обновлятор через winget", "One updater through winget", "Um único atualizador via winget"),
+            Id::Defender => t!("Исключения Defender для сборок и игр", "Defender exclusions for builds and games", "Exclusões do Defender para compilações e jogos"),
+            Id::Ntfs => t!("Быстрее NTFS", "Faster NTFS", "NTFS mais rápido"),
+            Id::Dns => t!("Блокировать рекламу (hosts)", "Block ads (hosts)", "Bloquear anúncios (hosts)"),
         }
     }
     pub fn desc(self) -> &'static str {
         match self {
-            Id::Game => t!("Останавливает Windows Update, BITS, оптимизацию доставки, печать, телеметрию; закрывает OneDrive, Teams, Dropbox, Google Drive, Phone Link, виджеты. «Выключить» всё запускает обратно.", "Stops Windows Update, BITS, Delivery Optimization, printing, telemetry; closes OneDrive, Teams, Dropbox, Google Drive, Phone Link, widgets. 'Disable' starts everything again."),
-            Id::Work => t!("Закрывает Steam, Epic, Battle.net, EA, Ubisoft, GOG, Overwolf, Xbox и Game Bar, останавливает их службы. «Выключить» запускает лаунчеры обратно.", "Closes Steam, Epic, Battle.net, EA, Ubisoft, GOG, Overwolf, Xbox and Game Bar, stops their services. 'Disable' starts the launchers again."),
-            Id::MemNow => t!("Сбрасывает список standby (кэш файлов, который никто не держит), как ISLC. Помогает от рывков в играх, когда свободной памяти нет.", "Drops the standby list (cached file data nobody holds), like ISLC. Helps against stutter in games when no memory is free."),
-            Id::MemAuto => t!("Панель topbar каждые 10 с проверяет память и сбрасывает кэш, если свободно меньше 5% (не меньше 512 МБ), а кэш больше 1 ГБ; не чаще раза в минуту.", "The topbar checks memory every 10 s and drops the cache when less than 5% (at least 512 MB) is free and the cache holds over 1 GB; at most once a minute."),
-            Id::Shell => t!("Меню «Пуск» Windows, виджеты и Связь с телефоном не запускаются (их заменяет topbar). Уведомления и ввод текста не трогаются.", "The Windows Start menu, widgets and Phone Link do not start (topbar replaces them). Notifications and text input are not touched."),
-            Id::Updaters => t!("Отключает службы и задачи обновления Adobe, Mozilla, Dropbox, CCleaner, Opera, Apple, Zoom, OneDrive; раз в неделю winget обновляет все программы. Браузеры обновляются сами, как раньше.", "Disables updater services and tasks of Adobe, Mozilla, Dropbox, CCleaner, Opera, Apple, Zoom, OneDrive; winget updates every app once a week. Browsers keep updating themselves."),
-            Id::Defender => t!("Defender перестаёт проверять кэши cargo, rustup, npm, pip, NuGet, Gradle и библиотеки Steam/Epic, а также cargo.exe и rustc.exe. Сборка и загрузка игр быстрее, но эти папки не сканируются.", "Defender stops scanning the caches of cargo, rustup, npm, pip, NuGet, Gradle and the Steam/Epic libraries, and cargo.exe and rustc.exe. Builds and game loading get faster, but those folders are not scanned."),
-            Id::Ntfs => t!("NTFS не пишет время последнего доступа при каждом чтении и не создаёт короткие имена 8.3. Действует после перезагрузки.", "NTFS stops writing the last-access time on every read and creating 8.3 short names. Takes effect after a reboot."),
-            Id::Dns => t!("Около 170 рекламных и следящих доменов ведут в никуда через файл hosts (домены Microsoft не трогаются).", "About 170 ad and tracker domains lead nowhere through the hosts file (Microsoft domains are left alone)."),
+            Id::Game => t!("Останавливает Windows Update, BITS, оптимизацию доставки, печать, телеметрию; закрывает OneDrive, Teams, Dropbox, Google Drive, Phone Link, виджеты. «Выключить» всё запускает обратно.", "Stops Windows Update, BITS, Delivery Optimization, printing, telemetry; closes OneDrive, Teams, Dropbox, Google Drive, Phone Link, widgets. 'Disable' starts everything again.", "Para o Windows Update, BITS, Otimização de Entrega, impressão e telemetria; fecha OneDrive, Teams, Dropbox, Google Drive, Link para Celular e widgets. 'Desativar' inicia tudo novamente."),
+            Id::Work => t!("Закрывает Steam, Epic, Battle.net, EA, Ubisoft, GOG, Overwolf, Xbox и Game Bar, останавливает их службы. «Выключить» запускает лаунчеры обратно.", "Closes Steam, Epic, Battle.net, EA, Ubisoft, GOG, Overwolf, Xbox and Game Bar, stops their services. 'Disable' starts the launchers again.", "Fecha Steam, Epic, Battle.net, EA, Ubisoft, GOG, Overwolf, Xbox e Game Bar e para seus serviços. 'Desativar' inicia os launchers novamente."),
+            Id::MemNow => t!("Сбрасывает список standby (кэш файлов, который никто не держит), как ISLC. Помогает от рывков в играх, когда свободной памяти нет.", "Drops the standby list (cached file data nobody holds), like ISLC. Helps against stutter in games when no memory is free.", "Descarta a lista standby (dados de arquivos em cache que ninguém usa), como o ISLC. Ajuda contra travamentos em jogos quando não há memória livre."),
+            Id::MemAuto => t!("Панель topbar каждые 10 с проверяет память и сбрасывает кэш, если свободно меньше 5% (не меньше 512 МБ), а кэш больше 1 ГБ; не чаще раза в минуту.", "The topbar checks memory every 10 s and drops the cache when less than 5% (at least 512 MB) is free and the cache holds over 1 GB; at most once a minute.", "O topbar verifica a memória a cada 10 s e descarta o cache quando há menos de 5% (mínimo de 512 MB) livre e o cache tem mais de 1 GB; no máximo uma vez por minuto."),
+            Id::Shell => t!("Меню «Пуск» Windows, виджеты и Связь с телефоном не запускаются (их заменяет topbar). Уведомления и ввод текста не трогаются.", "The Windows Start menu, widgets and Phone Link do not start (topbar replaces them). Notifications and text input are not touched.", "O Menu Iniciar do Windows, os widgets e o Link para Celular não são iniciados (o topbar os substitui). Notificações e entrada de texto não são alteradas."),
+            Id::Updaters => t!("Отключает службы и задачи обновления Adobe, Mozilla, Dropbox, CCleaner, Opera, Apple, Zoom, OneDrive; раз в неделю winget обновляет все программы. Браузеры обновляются сами, как раньше.", "Disables updater services and tasks of Adobe, Mozilla, Dropbox, CCleaner, Opera, Apple, Zoom, OneDrive; winget updates every app once a week. Browsers keep updating themselves.", "Desativa serviços e tarefas de atualização de Adobe, Mozilla, Dropbox, CCleaner, Opera, Apple, Zoom, OneDrive; o winget atualiza todos os aplicativos uma vez por semana. Os navegadores continuam se atualizando sozinhos."),
+            Id::Defender => t!("Defender перестаёт проверять кэши cargo, rustup, npm, pip, NuGet, Gradle и библиотеки Steam/Epic, а также cargo.exe и rustc.exe. Сборка и загрузка игр быстрее, но эти папки не сканируются.", "Defender stops scanning the caches of cargo, rustup, npm, pip, NuGet, Gradle and the Steam/Epic libraries, and cargo.exe and rustc.exe. Builds and game loading get faster, but those folders are not scanned.", "O Defender para de verificar os caches de cargo, rustup, npm, pip, NuGet, Gradle e as bibliotecas Steam/Epic, além de cargo.exe e rustc.exe. Compilações e carregamento de jogos ficam mais rápidos, mas essas pastas não são verificadas."),
+            Id::Ntfs => t!("NTFS не пишет время последнего доступа при каждом чтении и не создаёт короткие имена 8.3. Действует после перезагрузки.", "NTFS stops writing the last-access time on every read and creating 8.3 short names. Takes effect after a reboot.", "O NTFS deixa de gravar o horário do último acesso a cada leitura e de criar nomes curtos 8.3. Entra em vigor após reiniciar."),
+            Id::Dns => t!("Около 170 рекламных и следящих доменов ведут в никуда через файл hosts (домены Microsoft не трогаются).", "About 170 ad and tracker domains lead nowhere through the hosts file (Microsoft domains are left alone).", "Cerca de 170 domínios de anúncios e rastreadores não levam a lugar nenhum pelo arquivo hosts (domínios da Microsoft não são alterados)."),
         }
     }
     fn debloat_group(self) -> Option<&'static str> {
@@ -119,22 +119,22 @@ pub fn state(id: Id, is_admin: bool) -> State {
         return State::Busy;
     }
     if !is_admin {
-        return State::Unavailable(t!("нужен администратор", "administrator needed").into());
+        return State::Unavailable(t!("нужен администратор", "administrator needed", "requer administrador").into());
     }
     let on = |b: bool| if b { State::On } else { State::Off };
     match id {
         Id::Game | Id::Work => on(active_profile() == Some(id)),
         Id::MemNow => match winrust_common::mem::lists() {
-            Some(l) => State::Info(tf!("свободно {}, кэш {}", "free {}, cache {}", crate::ui::fmt_mem(l.free), crate::ui::fmt_mem(l.standby))),
-            None => State::Unavailable(t!("нет права SeProfileSingleProcess", "no SeProfileSingleProcess right").into()),
+            Some(l) => State::Info(tf!("свободно {}, кэш {}", "free {}, cache {}", pt: "livre {}, cache {}", crate::ui::fmt_mem(l.free), crate::ui::fmt_mem(l.standby))),
+            None => State::Unavailable(t!("нет права SeProfileSingleProcess", "no SeProfileSingleProcess right", "sem o direito SeProfileSingleProcess").into()),
         },
-        Id::MemAuto if !topbar_installed() => State::Unavailable(t!("нужна панель topbar", "needs the topbar").into()),
+        Id::MemAuto if !topbar_installed() => State::Unavailable(t!("нужна панель topbar", "needs the topbar", "requer o topbar").into()),
         Id::MemAuto => on(winrust_common::mem::auto_on()),
-        Id::Shell if !topbar_installed() => State::Unavailable(t!("нужна панель topbar (без неё не будет меню «Пуск»)", "needs the topbar (no Start menu without it)").into()),
+        Id::Shell if !topbar_installed() => State::Unavailable(t!("нужна панель topbar (без неё не будет меню «Пуск»)", "needs the topbar (no Start menu without it)", "requer o topbar (sem ele não há Menu Iniciar)").into()),
         Id::Shell => on(shell_blocked()),
         _ => match (id.debloat_group(), debloat_exe()) {
             (Some(g), Some(_)) => on(debloat_applied(g)),
-            _ => State::Unavailable(t!("нет debloat.exe (переустановите диспетчер задач)", "no debloat.exe (reinstall the task manager)").into()),
+            _ => State::Unavailable(t!("нет debloat.exe (переустановите диспетчер задач)", "no debloat.exe (reinstall the task manager)", "debloat.exe ausente (reinstale o gerenciador de tarefas)").into()),
         },
     }
 }
@@ -142,12 +142,12 @@ pub fn state(id: Id, is_admin: bool) -> State {
 /// Запускает включение/выключение в фоне. Err — сразу понятно, что нельзя (текст для подсказки).
 pub fn start(id: Id, on: bool, donors: Vec<u32>) -> Result<(), String> {
     match state(id, true) {
-        State::Busy => return Err(t!("уже выполняется", "already running").into()),
+        State::Busy => return Err(t!("уже выполняется", "already running", "já em execução").into()),
         State::Unavailable(why) => return Err(why),
         _ => {}
     }
     if id == Id::MemNow && !on {
-        return Err(t!("это разовое действие: выключать нечего", "a one-time action: nothing to disable").into());
+        return Err(t!("это разовое действие: выключать нечего", "a one-time action: nothing to disable", "ação única: nada a desativar").into());
     }
     BUSY.lock().unwrap().push(id);
     std::thread::spawn(move || {
@@ -156,7 +156,7 @@ pub fn start(id: Id, on: bool, donors: Vec<u32>) -> Result<(), String> {
         let head = id.title();
         DONE.lock().unwrap().push(match r {
             Ok(msg) => format!("{head}: {msg}"),
-            Err(e) => tf!("{head}: ошибка — {e}", "{head}: error - {e}"),
+            Err(e) => tf!("{head}: ошибка — {e}", "{head}: error - {e}", pt: "{head}: erro - {e}"),
         });
     });
     Ok(())
@@ -168,21 +168,21 @@ fn run(id: Id, on: bool, donors: &[u32]) -> Result<String, String> {
         Id::Game | Id::Work => profile_off(donors),
         Id::MemNow => {
             let before = winrust_common::mem::lists();
-            winrust_common::mem::purge_standby().map_err(|st| tf!("NTSTATUS 0x{:08X}", "NTSTATUS 0x{:08X}", st as u32))?;
+            winrust_common::mem::purge_standby().map_err(|st| tf!("NTSTATUS 0x{:08X}", "NTSTATUS 0x{:08X}", pt: "NTSTATUS 0x{:08X}", st as u32))?;
             let freed = match (before, winrust_common::mem::lists()) {
                 (Some(a), Some(b)) => b.free.saturating_sub(a.free),
                 _ => 0,
             };
-            Ok(tf!("освобождено {}", "{} freed", crate::ui::fmt_mem(freed)))
+            Ok(tf!("освобождено {}", "{} freed", pt: "{} liberados", crate::ui::fmt_mem(freed)))
         }
         Id::MemAuto => {
             let f = winrust_common::mem::auto_file().ok_or("ProgramData?")?;
             if on {
                 fs::create_dir_all(f.parent().unwrap()).and_then(|_| fs::write(&f, "1")).map_err(|e| e.to_string())?;
-                Ok(t!("включено (работает, пока запущена панель)", "on (works while the bar runs)").into())
+                Ok(t!("включено (работает, пока запущена панель)", "on (works while the bar runs)", "ativado (funciona enquanto a barra estiver em execução)").into())
             } else {
                 let _ = fs::remove_file(&f);
-                Ok(t!("выключено", "off").into())
+                Ok(t!("выключено", "off", "desativado").into())
             }
         }
         Id::Shell => shell_set(on),
@@ -191,7 +191,7 @@ fn run(id: Id, on: bool, donors: &[u32]) -> Result<String, String> {
             let g = id.debloat_group().unwrap();
             let o = Command::new(&exe).args([if on { "--apply" } else { "--undo" }, g]).creation_flags(0x0800_0000).output().map_err(|e| e.to_string())?;
             if o.status.success() {
-                Ok(if on { t!("включено", "on") } else { t!("возвращено как было", "restored") }.into())
+                Ok(if on { t!("включено", "on", "ativado") } else { t!("возвращено как было", "restored", "restaurado") }.into())
             } else {
                 let err = String::from_utf8_lossy(&o.stderr);
                 Err(err.lines().last().unwrap_or("debloat").to_string())
@@ -320,13 +320,13 @@ fn profile_on(id: Id, donors: &[u32]) -> Result<String, String> {
     }
     let f = profile_file();
     fs::create_dir_all(f.parent().unwrap()).and_then(|_| fs::write(&f, text)).map_err(|e| e.to_string())?;
-    Ok(tf!("остановлено служб: {stopped}, закрыто процессов: {closed}", "{stopped} services stopped, {closed} processes closed"))
+    Ok(tf!("остановлено служб: {stopped}, закрыто процессов: {closed}", "{stopped} services stopped, {closed} processes closed", pt: "{stopped} serviços parados, {closed} processos fechados"))
 }
 
 fn profile_off(donors: &[u32]) -> Result<String, String> {
     let f = profile_file();
     let Some((_, svcs, runs)) = fs::read_to_string(&f).ok().and_then(|t| parse_profile(&t)) else {
-        return Ok(t!("профиль не был включён", "no profile was on").into());
+        return Ok(t!("профиль не был включён", "no profile was on", "nenhum perfil estava ativo").into());
     };
     let started = svcs.iter().filter(|s| sys::service_ctl(s, true).is_ok()).count();
     let mut launched = 0;
@@ -339,7 +339,7 @@ fn profile_off(donors: &[u32]) -> Result<String, String> {
         }
     }
     fs::remove_file(&f).map_err(|e| e.to_string())?;
-    Ok(tf!("запущено служб: {started}, программ: {launched}", "{started} services and {launched} programs started again"))
+    Ok(tf!("запущено служб: {started}, программ: {launched}", "{started} services and {launched} programs started again", pt: "{started} serviços e {launched} programas iniciados novamente"))
 }
 
 // ---------- процессы оболочки ----------
@@ -396,11 +396,11 @@ fn shell_set(on: bool) -> Result<String, String> {
             continue;
         };
         if rc != 0 {
-            return Err(tf!("{exe}: ошибка реестра {rc}", "{exe}: registry error {rc}"));
+            return Err(tf!("{exe}: ошибка реестра {rc}", "{exe}: registry error {rc}", pt: "{exe}: erro de registro {rc}"));
         }
         n += 1;
     }
-    Ok(if on { tf!("заблокировано процессов: {n}", "{n} processes blocked") } else { tf!("разблокировано процессов: {n}", "{n} processes unblocked") })
+    Ok(if on { tf!("заблокировано процессов: {n}", "{n} processes blocked", pt: "{n} processos bloqueados") } else { tf!("разблокировано процессов: {n}", "{n} processes unblocked", pt: "{n} processos desbloqueados") })
 }
 
 #[cfg(test)]

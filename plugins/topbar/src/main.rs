@@ -581,7 +581,7 @@ unsafe fn tip_text(h: i32) -> String {
         SEARCH => "Search".into(),
         0 => "Start".into(),
         TAPP => "Hidden icons".into(),
-        GEAR => t!("Стиль", "Style").into(),
+        GEAR => t!("Стиль", "Style", "Estilo").into(),
         CLOCK => {
             let mut t: SYSTEMTIME = zeroed();
             GetLocalTime(&mut t);
@@ -589,12 +589,12 @@ unsafe fn tip_text(h: i32) -> String {
             let n = GetDateFormatW(0x0400, 2, &t, null(), b.as_mut_ptr(), 80).max(1) as usize - 1; // DATE_LONGDATE
             String::from_utf16_lossy(&b[..n])
         }
-        LANG => tf!("Язык ввода: {}", "Input language: {}", layout_names(layouts().1).0),
+        LANG => tf!("Язык ввода: {}", "Input language: {}", pt: "Idioma de entrada: {}", layout_names(layouts().1).0),
         WIFI_I => match net() {
-            Link::Wifi(q) => tf!("Wi‑Fi · сигнал {q}%", "Wi‑Fi · signal {q}%"),
-            Link::NoInternet(_) => t!("Wi‑Fi подключён, но интернета нет", "Wi‑Fi connected, no internet").into(),
-            Link::Cable => t!("Интернет по кабелю", "Internet over a cable").into(),
-            Link::Offline => t!("Нет подключения к сети", "Not connected").into(),
+            Link::Wifi(q) => tf!("Wi‑Fi · сигнал {q}%", "Wi‑Fi · signal {q}%", pt: "Wi‑Fi · sinal {q}%"),
+            Link::NoInternet(_) => t!("Wi‑Fi подключён, но интернета нет", "Wi‑Fi connected, no internet", "Wi‑Fi conectado, sem internet").into(),
+            Link::Cable => t!("Интернет по кабелю", "Internet over a cable", "Internet por cabo").into(),
+            Link::Offline => t!("Нет подключения к сети", "Not connected", "Não conectado").into(),
         },
         VOL_I => vol_tip(),
         BAT_I => match BAT.get() {
@@ -2598,15 +2598,15 @@ unsafe fn save_bitmap(bmp: HBITMAP) -> Option<String> {
 unsafe fn clip_notice(bar: HWND) {
     let name = clip::DONE.lock().ok().and_then(|mut d| d.take()).unwrap_or_default();
     KillTimer(bar, 2);
-    show_tip(tf!("Фрагмент сохранён: {name}\nи скопирован в буфер обмена", "Snip saved: {name}\nand copied to the clipboard"), GetSystemMetrics(SM_CXSCREEN) / 2);
+    show_tip(tf!("Фрагмент сохранён: {name}\nи скопирован в буфер обмена", "Snip saved: {name}\nand copied to the clipboard", pt: "Recorte salvo: {name}\ne copiado para a área de transferência"), GetSystemMetrics(SM_CXSCREEN) / 2);
     SetTimer(bar, 6, 2500, None);
 }
 
 /// PrtSc pressed: take the screenshot, then say so above the bar for a moment.
 unsafe fn screenshot_notice(bar: HWND) {
     let msg = match screenshot() {
-        Some(n) => tf!("Скриншот сохранён: {n}\nи скопирован в буфер обмена", "Screenshot saved: {n}\nand copied to the clipboard"),
-        None => t!("Не удалось сделать скриншот", "Could not take a screenshot").to_string(),
+        Some(n) => tf!("Скриншот сохранён: {n}\nи скопирован в буфер обмена", "Screenshot saved: {n}\nand copied to the clipboard", pt: "Captura de tela salva: {n}\ne copiada para a área de transferência"),
+        None => t!("Не удалось сделать скриншот", "Could not take a screenshot", "Não foi possível capturar a tela").to_string(),
     };
     KillTimer(bar, 2);
     show_tip(msg, GetSystemMetrics(SM_CXSCREEN) / 2);
@@ -2641,8 +2641,8 @@ unsafe fn lang_menu(bar: HWND) {
         let (name, short) = layout_names(k);
         fly::MItem::new(name).on(k == cur).hint(Box::leak(short.into_boxed_str())) // a handful of short strings, kept for the bar's lifetime
     }).collect();
-    items.push(fly::MItem::new(t!("Языковые параметры", "Language settings")).sep());
-    let head = (null_mut(), "\u{E775}", t!("Язык ввода", "Input language").to_string(), t!("Win+Пробел — следующий", "Win+Space — next one").to_string());
+    items.push(fly::MItem::new(t!("Языковые параметры", "Language settings", "Configurações de idioma")).sep());
+    let head = (null_mut(), "\u{E775}", t!("Язык ввода", "Input language", "Idioma de entrada").to_string(), t!("Win+Пробел — следующий", "Win+Space — next one", "Win+Espaço — próximo").to_string());
     fly::menu(tip_cx(&bar_layout(bar), LANG), Some(head), items, move |i| match list.get(i) {
         Some(&k) => set_lang(bar, k),
         None => open(&wide("ms-settings:regionlanguage")),
@@ -3123,9 +3123,9 @@ unsafe fn app_menu(hwnd: HWND, h: i32) {
     let stem = std::path::Path::new(&launch).file_stem().unwrap_or_default().to_string_lossy().to_string();
     let name: String = stem.chars().take(1).flat_map(char::to_uppercase).chain(stem.chars().skip(1)).collect();
     let sub = match (wins.len(), pin.is_some()) {
-        (0, _) => t!("Закреплено · не запущено", "Pinned · not running").to_string(),
-        (n, true) => tf!("Закреплено · {}", "Pinned · {}", windows_ru(n)),
-        (n, false) => tf!("Запущено · {}", "Running · {}", windows_ru(n)),
+        (0, _) => t!("Закреплено · не запущено", "Pinned · not running", "Fixado · não está em execução").to_string(),
+        (n, true) => tf!("Закреплено · {}", "Pinned · {}", pt: "Fixado · {}", windows_ru(n)),
+        (n, false) => tf!("Запущено · {}", "Running · {}", pt: "Em execução · {}", windows_ru(n)),
     };
     let icon = if picon.is_null() { bicon } else { picon };
     let mut items: Vec<(fly::MItem, A)> = Vec::new();
@@ -3137,30 +3137,30 @@ unsafe fn app_menu(hwnd: HWND, h: i32) {
         }
     }
     if !launch.is_empty() {
-        let it = fly::MItem::new(if wins.is_empty() { t!("Открыть", "Open") } else { t!("Новое окно", "New window") });
+        let it = fly::MItem::new(if wins.is_empty() { t!("Открыть", "Open", "Abrir") } else { t!("Новое окно", "New window", "Nova janela") });
         items.push((if items.is_empty() { it } else { it.sep() }, A::Open));
     }
     if pin.is_some() {
-        items.push((fly::MItem::new(t!("Открепить от панели", "Unpin from the bar")), A::Pin));
+        items.push((fly::MItem::new(t!("Открепить от панели", "Unpin from the bar", "Desafixar da barra")), A::Pin));
     } else if !exe.is_empty() {
-        items.push((fly::MItem::new(t!("Закрепить на панели", "Pin to the bar")), A::Pin));
+        items.push((fly::MItem::new(t!("Закрепить на панели", "Pin to the bar", "Fixar na barra")), A::Pin));
     }
     if let Some(p) = pin.filter(|_| !lnk.is_empty()) {
         let n = PINS.with_borrow(|p| p.len());
         if p > 0 {
-            items.push((fly::MItem::new(if vert() { t!("Выше", "Move up") } else { t!("Сдвинуть влево", "Move left") }), A::Left));
+            items.push((fly::MItem::new(if vert() { t!("Выше", "Move up", "Mover para cima") } else { t!("Сдвинуть влево", "Move left", "Mover para a esquerda") }), A::Left));
         }
         if p + 1 < n {
-            items.push((fly::MItem::new(if vert() { t!("Ниже", "Move down") } else { t!("Сдвинуть вправо", "Move right") }), A::Right));
+            items.push((fly::MItem::new(if vert() { t!("Ниже", "Move down", "Mover para baixo") } else { t!("Сдвинуть вправо", "Move right", "Mover para a direita") }), A::Right));
         }
     }
     if !launch.is_empty() {
         let s = fly::start_pinned(&launch);
-        items.push((fly::MItem::new(if s { t!("Убрать из Пуска", "Remove from Start") } else { t!("Добавить в Пуск", "Add to Start") }), A::Start));
+        items.push((fly::MItem::new(if s { t!("Убрать из Пуска", "Remove from Start", "Remover do Iniciar") } else { t!("Добавить в Пуск", "Add to Start", "Adicionar ao Iniciar") }), A::Start));
     }
     if !wins.is_empty() {
-        items.push((fly::MItem::new(if wins.len() > 1 { t!("Закрыть все окна", "Close all windows") } else { t!("Закрыть окно", "Close window") }).hint("Alt+F4").sep(), A::Close));
-        items.push((fly::MItem::new(t!("Завершить процесс", "End process")).danger(), A::Kill));
+        items.push((fly::MItem::new(if wins.len() > 1 { t!("Закрыть все окна", "Close all windows", "Fechar todas as janelas") } else { t!("Закрыть окно", "Close window", "Fechar janela") }).hint("Alt+F4").sep(), A::Close));
+        items.push((fly::MItem::new(t!("Завершить процесс", "End process", "Finalizar processo")).danger(), A::Kill));
     }
     let acts: Vec<A> = items.iter().map(|x| x.1).collect();
     let items = items.into_iter().map(|x| x.0).collect();
@@ -3337,16 +3337,16 @@ unsafe fn open_launcher() -> bool {
 /// (the look is saved for the other WinRust programs too). Picking on a page keeps it open, so choices can be tried in a row.
 unsafe fn style_menu() {
     let items = vec![
-        fly::MItem::head(t!("Внешний вид", "Look")),
-        fly::MItem::new(t!("Тема", "Theme")).hint(style_name(style())).swatch(i18n::style::pal().accent),
-        fly::MItem::new(t!("Цвета и прозрачность", "Colors and transparency")).hint("›"),
-        fly::MItem::new(t!("Шаблоны", "Templates")).hint("›"),
-        fly::MItem::head(t!("Панель", "Bar")).sep(),
-        fly::MItem::new(t!("Положение, размер, поведение", "Position, size, behavior")).hint("›"),
-        fly::MItem::new(t!("Разложить окна плиткой", "Tile the windows")),
-        fly::MItem::new(t!("Сбросить всё по умолчанию…", "Reset everything to defaults…")).danger().sep(),
+        fly::MItem::head(t!("Внешний вид", "Look", "Aparência")),
+        fly::MItem::new(t!("Тема", "Theme", "Tema")).hint(style_name(style())).swatch(i18n::style::pal().accent),
+        fly::MItem::new(t!("Цвета и прозрачность", "Colors and transparency", "Cores e transparência")).hint("›"),
+        fly::MItem::new(t!("Шаблоны", "Templates", "Modelos")).hint("›"),
+        fly::MItem::head(t!("Панель", "Bar", "Barra")).sep(),
+        fly::MItem::new(t!("Положение, размер, поведение", "Position, size, behavior", "Posição, tamanho, comportamento")).hint("›"),
+        fly::MItem::new(t!("Разложить окна плиткой", "Tile the windows", "Lado a lado")),
+        fly::MItem::new(t!("Сбросить всё по умолчанию…", "Reset everything to defaults…", "Restaurar tudo ao padrão…")).danger().sep(),
     ];
-    gear_page("\u{E713}", t!("Настройки панели", "Bar settings"), t!("Вид панели и программ WinRust", "Look of the bar and the WinRust programs"), items, |i| match i {
+    gear_page("\u{E713}", t!("Настройки панели", "Bar settings", "Configurações da barra"), t!("Вид панели и программ WinRust", "Look of the bar and the WinRust programs", "Aparência da barra e dos programas WinRust"), items, |i| match i {
         1 => theme_page(),
         2 => colors_page(),
         3 => templates_page(),
@@ -3364,18 +3364,18 @@ unsafe fn gear_page(glyph: &'static str, title: &str, sub: &str, items: Vec<fly:
 }
 
 fn back() -> fly::MItem {
-    fly::MItem::new(t!("‹   Назад", "‹   Back"))
+    fly::MItem::new(t!("‹   Назад", "‹   Back", "‹   Voltar"))
 }
 
 fn style_name(s: i18n::style::Style) -> &'static str {
     use i18n::style::Style::*;
     match s {
-        Normal => t!("Обычный", "Normal"),
-        Terminal => t!("Терминал", "Terminal"),
-        Dock => t!("Плавающий док", "Floating dock"),
-        Tiling => t!("Тайлинг", "Tiling"),
-        Road => t!("Белая дорога", "White road"),
-        Ruby => t!("Рубин", "Ruby"),
+        Normal => t!("Обычный", "Normal", "Normal"),
+        Terminal => t!("Терминал", "Terminal", "Terminal"),
+        Dock => t!("Плавающий док", "Floating dock", "Dock flutuante"),
+        Tiling => t!("Тайлинг", "Tiling", "Lado a lado"),
+        Road => t!("Белая дорога", "White road", "Estrada branca"),
+        Ruby => t!("Рубин", "Ruby", "Ruby"),
     }
 }
 
@@ -3396,7 +3396,7 @@ unsafe fn theme_page() {
         let it = fly::MItem::new(style_name(s)).swatch(i18n::style::PALS[k].accent).on(s == style());
         items.push(if k == 0 { it.sep() } else { it });
     }
-    gear_page("\u{E790}", t!("Тема", "Theme"), t!("Готовый вид панели и окон", "A ready-made look for the bar and windows"), items, |i| {
+    gear_page("\u{E790}", t!("Тема", "Theme", "Tema"), t!("Готовый вид панели и окон", "A ready-made look for the bar and windows", "Um visual pronto para a barra e as janelas"), items, |i| {
         let Some(&s) = i.checked_sub(1).and_then(|k| i18n::style::ALL.get(k)) else { return style_menu() };
         i18n::style::set_style(s);
         relook(false);
@@ -3409,20 +3409,20 @@ unsafe fn bar_page() {
     let sides = [Side::Bottom, Side::Left, Side::Right];
     let items = vec![
         back(),
-        fly::MItem::head(t!("Положение", "Position")).sep(),
-        fly::MItem::new(t!("Снизу", "Bottom")).on(st::side() == Side::Bottom),
-        fly::MItem::new(t!("Слева", "Left")).on(st::side() == Side::Left),
-        fly::MItem::new(t!("Справа", "Right")).on(st::side() == Side::Right),
-        fly::MItem::head(t!("Размер", "Size")),
-        fly::MItem::new(t!("Маленькая", "Small")).on(st::bar_size() == 0),
-        fly::MItem::new(t!("Обычная", "Normal")).on(st::bar_size() == 1),
-        fly::MItem::new(t!("Большая", "Large")).on(st::bar_size() == 2),
-        fly::MItem::head(t!("Поведение", "Behavior")),
-        fly::MItem::new(t!("Скрывать автоматически", "Hide automatically")).on(st::autohide()),
-        fly::MItem::new(t!("Кнопки слева, как в Windows 10", "Buttons on the left, like Windows 10")).on(st::align_left()),
-        fly::MItem::new(t!("Alt+Tab: только этот монитор", "Alt+Tab: this monitor only")).on(st::alttab_per_monitor()),
+        fly::MItem::head(t!("Положение", "Position", "Posição")).sep(),
+        fly::MItem::new(t!("Снизу", "Bottom", "Parte inferior")).on(st::side() == Side::Bottom),
+        fly::MItem::new(t!("Слева", "Left", "Esquerda")).on(st::side() == Side::Left),
+        fly::MItem::new(t!("Справа", "Right", "Direita")).on(st::side() == Side::Right),
+        fly::MItem::head(t!("Размер", "Size", "Tamanho")),
+        fly::MItem::new(t!("Маленькая", "Small", "Pequeno")).on(st::bar_size() == 0),
+        fly::MItem::new(t!("Обычная", "Normal", "Normal")).on(st::bar_size() == 1),
+        fly::MItem::new(t!("Большая", "Large", "Grande")).on(st::bar_size() == 2),
+        fly::MItem::head(t!("Поведение", "Behavior", "Comportamento")),
+        fly::MItem::new(t!("Скрывать автоматически", "Hide automatically", "Ocultar automaticamente")).on(st::autohide()),
+        fly::MItem::new(t!("Кнопки слева, как в Windows 10", "Buttons on the left, like Windows 10", "Botões à esquerda, como no Windows 10")).on(st::align_left()),
+        fly::MItem::new(t!("Alt+Tab: только этот монитор", "Alt+Tab: this monitor only", "Alt+Tab: só este monitor")).on(st::alttab_per_monitor()),
     ];
-    gear_page("\u{E8A1}", t!("Панель", "Bar"), t!("Где она, какого размера и как себя ведёт", "Where it sits, its size and behavior"), items, move |i| {
+    gear_page("\u{E8A1}", t!("Панель", "Bar", "Barra"), t!("Где она, какого размера и как себя ведёт", "Where it sits, its size and behavior", "Onde fica, tamanho e comportamento"), items, move |i| {
         match i {
             2..=4 => st::set_side(sides[i - 2]),
             6..=8 => st::set_bar_size((i - 6) as u8),
@@ -3447,24 +3447,24 @@ unsafe fn colors_page() {
     use windows_sys::Win32::UI::Controls::Dialogs::{CC_FULLOPEN, CC_RGBINIT, CHOOSECOLORW, ChooseColorW};
     const PCT: [u8; 5] = [100, 85, 70, 55, 40];
     let colors = [
-        t!("Фон", "Background"),
-        t!("Линии и рамки", "Lines and borders"),
-        t!("Наведение", "Hover"),
-        t!("Нажатие и выбранное", "Pressed and selected"),
-        t!("Акцент", "Accent"),
-        t!("Текст", "Text"),
-        t!("Второстепенный текст", "Secondary text"),
+        t!("Фон", "Background", "Plano de fundo"),
+        t!("Линии и рамки", "Lines and borders", "Linhas e bordas"),
+        t!("Наведение", "Hover", "Passar o mouse"),
+        t!("Нажатие и выбранное", "Pressed and selected", "Pressionado e selecionado"),
+        t!("Акцент", "Accent", "Cor de destaque"),
+        t!("Текст", "Text", "Texto"),
+        t!("Второстепенный текст", "Secondary text", "Texto secundário"),
     ];
     let cur = i18n::style::custom_colors().unwrap_or([u32::MAX; 7]);
     let p = i18n::style::pal();
     let now = [p.bg, p.line, p.hover, p.active, p.accent, p.text, p.dim]; // what is shown now: the dialog starts there
-    let mut items = vec![back(), fly::MItem::head(t!("Цвета (точка справа: изменён вами)", "Colors (dot on the right: changed by you)")).sep()];
+    let mut items = vec![back(), fly::MItem::head(t!("Цвета (точка справа: изменён вами)", "Colors (dot on the right: changed by you)", "Cores (ponto à direita: alterado por você)")).sep()];
     items.extend(colors.iter().enumerate().map(|(i, n)| fly::MItem::new(*n).swatch(now[i]).on(cur[i] != u32::MAX)));
-    items.push(fly::MItem::head(t!("Непрозрачность панели", "Bar opacity")));
-    items.extend(PCT.iter().map(|&v| fly::MItem::new(if v == 100 { t!("100 %, без прозрачности", "100 %, solid").to_string() } else { format!("{v} %") }).on(i18n::style::bar_opacity() == v)));
-    items.push(fly::MItem::new(t!("Вернуть цвета темы", "Back to the theme's colors")).danger().sep());
+    items.push(fly::MItem::head(t!("Непрозрачность панели", "Bar opacity", "Opacidade da barra")));
+    items.extend(PCT.iter().map(|&v| fly::MItem::new(if v == 100 { t!("100 %, без прозрачности", "100 %, solid", "100 %, sólido").to_string() } else { format!("{v} %") }).on(i18n::style::bar_opacity() == v)));
+    items.push(fly::MItem::new(t!("Вернуть цвета темы", "Back to the theme's colors", "Voltar às cores do tema")).danger().sep());
     let (c0, o0) = (2, 3 + colors.len()); // first colour row, first opacity row
-    gear_page("\u{E790}", t!("Цвета и прозрачность", "Colors and transparency"), t!("Поверх выбранной темы", "On top of the chosen theme"), items, move |i| {
+    gear_page("\u{E790}", t!("Цвета и прозрачность", "Colors and transparency", "Cores e transparência"), t!("Поверх выбранной темы", "On top of the chosen theme", "Sobre o tema escolhido"), items, move |i| {
         let bar = BAR.load(Relaxed) as HWND;
         if i == 0 {
             return style_menu();
@@ -3496,9 +3496,9 @@ unsafe fn templates_page() {
     use i18n::style::{ALL, PALS, Theme};
     let list = i18n::style::themes();
     let now = Theme::current("");
-    let mut items = vec![back(), fly::MItem::head(t!("Мои шаблоны", "My templates")).sep()];
+    let mut items = vec![back(), fly::MItem::head(t!("Мои шаблоны", "My templates", "Meus modelos")).sep()];
     if list.is_empty() {
-        items.push(fly::MItem::head(t!("Пока пусто: настройте вид и сохраните", "None yet: set up a look and save it")));
+        items.push(fly::MItem::head(t!("Пока пусто: настройте вид и сохраните", "None yet: set up a look and save it", "Nenhum ainda: configure uma aparência e salve")));
     }
     let first = items.len(); // index of the first template row
     for th in &list {
@@ -3507,11 +3507,11 @@ unsafe fn templates_page() {
         items.push(fly::MItem::new(th.name.clone()).hint(style_name(th.style)).swatch(accent).on(same));
     }
     let save = items.len();
-    items.push(fly::MItem::new(t!("Сохранить текущий вид как шаблон", "Save the current look as a template")).sep());
+    items.push(fly::MItem::new(t!("Сохранить текущий вид как шаблон", "Save the current look as a template", "Salvar a aparência atual como modelo")).sep());
     if !list.is_empty() {
-        items.push(fly::MItem::new(t!("Удалить шаблон…", "Delete a template…")).danger());
+        items.push(fly::MItem::new(t!("Удалить шаблон…", "Delete a template…", "Excluir um modelo…")).danger());
     }
-    gear_page("\u{E8F1}", t!("Шаблоны", "Templates"), t!("Свои наборы на любое настроение", "Your own looks for any mood"), items, move |i| {
+    gear_page("\u{E8F1}", t!("Шаблоны", "Templates", "Modelos"), t!("Свои наборы на любое настроение", "Your own looks for any mood", "Suas próprias aparências para qualquer humor"), items, move |i| {
         let mut list = list;
         if i == 0 {
             return style_menu();
@@ -3519,7 +3519,7 @@ unsafe fn templates_page() {
             list[i - first].apply();
             relook(false);
         } else if i == save {
-            let name = |n: usize| tf!("Шаблон {}", "Template {}", n);
+            let name = |n: usize| tf!("Шаблон {}", "Template {}", pt: "Modelo {}", n);
             let n = (1..).find(|&n| !list.iter().any(|t| t.name == name(n))).unwrap_or(1);
             list.push(Theme::current(&name(n)));
             i18n::style::save_themes(&list);
@@ -3537,7 +3537,7 @@ unsafe fn delete_page() {
         let it = fly::MItem::new(th.name.clone()).hint(style_name(th.style)).danger();
         items.push(if k == 0 { it.sep() } else { it });
     }
-    gear_page("\u{E74D}", t!("Удалить шаблон", "Delete a template"), t!("Нажмите на шаблон, чтобы удалить", "Click a template to delete it"), items, move |i| {
+    gear_page("\u{E74D}", t!("Удалить шаблон", "Delete a template", "Excluir um modelo"), t!("Нажмите на шаблон, чтобы удалить", "Click a template to delete it", "Clique em um modelo para excluí-lo"), items, move |i| {
         let mut list = list;
         if i == 0 || i > list.len() {
             return templates_page();
@@ -3549,8 +3549,8 @@ unsafe fn delete_page() {
 }
 
 unsafe fn reset_page() {
-    let items = vec![fly::MItem::new(t!("Да, сбросить", "Yes, reset")).danger(), fly::MItem::new(t!("Отмена", "Cancel"))];
-    gear_page("\u{E777}", t!("Сбросить всё?", "Reset everything?"), t!("Тема, цвета, панель. Шаблоны останутся", "Theme, colors, bar. Templates stay"), items, |i| {
+    let items = vec![fly::MItem::new(t!("Да, сбросить", "Yes, reset", "Sim, restaurar")).danger(), fly::MItem::new(t!("Отмена", "Cancel", "Cancelar"))];
+    gear_page("\u{E777}", t!("Сбросить всё?", "Reset everything?", "Restaurar tudo?"), t!("Тема, цвета, панель. Шаблоны останутся", "Theme, colors, bar. Templates stay", "Tema, cores, barra. Os modelos permanecem"), items, |i| {
         if i == 0 {
             i18n::style::reset_all();
             relook(true);
@@ -3587,7 +3587,7 @@ unsafe fn start_menu() {
         items.push(if i == tools.len() { it.sep() } else { it });
         targets.push(*to);
     }
-    let head = (null_mut(), "\u{E700}", t!("Пуск", "Start").to_string(), String::new());
+    let head = (null_mut(), "\u{E700}", t!("Пуск", "Start", "Iniciar").to_string(), String::new());
     fly::menu(tip_cx(&bar_layout(bar), 0), Some(head), items, move |i| {
         let Some(&to) = targets.get(i) else { return };
         let quiet = |c: &mut Command| { let _ = c.creation_flags(NO_WINDOW).spawn(); };

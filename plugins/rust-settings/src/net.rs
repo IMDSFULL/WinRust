@@ -29,8 +29,8 @@ pub struct Adapter {
 pub fn speed_text(bits_per_sec: u64) -> Option<String> {
     match bits_per_sec / 1_000_000 {
         0 => None,
-        m if m >= 1000 => Some(tf!("{} Гбит/с", "{} Gbps", m as f64 / 1000.0)),
-        m => Some(tf!("{} Мбит/с", "{} Mbps", m)),
+        m if m >= 1000 => Some(tf!("{} Гбит/с", "{} Gbps", pt: "{} Gbps", m as f64 / 1000.0)),
+        m => Some(tf!("{} Мбит/с", "{} Mbps", pt: "{} Mbps", m)),
     }
 }
 
@@ -43,13 +43,13 @@ impl Adapter {
     /// The short status on the right of the adapter's row.
     pub fn status(&self) -> String {
         if !self.up {
-            return t!("Не подключено", "Not connected").into();
+            return t!("Не подключено", "Not connected", "Não conectado").into();
         }
         match (self.internet, self.ipv4.first()) {
-            (Some(true), _) => t!("Интернет", "Internet").into(),
-            (_, Some((ip, _))) if apipa(ip) && self.ipv6.is_empty() => t!("Нет адреса (DHCP)", "No address (DHCP)").into(),
-            (Some(false), _) => t!("Без интернета", "No internet").into(),
-            _ => t!("Подключено", "Connected").into(),
+            (Some(true), _) => t!("Интернет", "Internet", "Internet").into(),
+            (_, Some((ip, _))) if apipa(ip) && self.ipv6.is_empty() => t!("Нет адреса (DHCP)", "No address (DHCP)", "Sem endereço (DHCP)").into(),
+            (Some(false), _) => t!("Без интернета", "No internet", "Sem internet").into(),
+            _ => t!("Подключено", "Connected", "Conectado").into(),
         }
     }
 
@@ -63,17 +63,17 @@ impl Adapter {
     /// (label, value) rows of the expanded adapter.
     pub fn details(&self) -> Vec<(String, String)> {
         let join = |v: Vec<String>| if v.is_empty() { "—".to_string() } else { v.join(", ") };
-        let mut out = vec![(t!("Описание", "Description").to_string(), self.desc.clone())];
+        let mut out = vec![(t!("Описание", "Description", "Descrição").to_string(), self.desc.clone())];
         if self.up {
             // an unplugged adapter keeps a link-local address and Windows' placeholder DNS: noise, not shown
             out.push(("IPv4".into(), join(self.ipv4.iter().map(|(ip, p)| format!("{ip}/{p}")).collect())));
             if !self.ipv6.is_empty() {
                 out.push(("IPv6".into(), join(self.ipv6.iter().map(|ip| ip.to_string()).collect())));
             }
-            out.push((t!("Шлюз", "Gateway").into(), join(self.gateway.clone())));
+            out.push((t!("Шлюз", "Gateway", "Gateway").into(), join(self.gateway.clone())));
             out.push(("DNS".into(), join(self.dns.clone())));
         }
-        out.push((t!("Адрес IP", "IP assignment").into(), if self.dhcp { t!("Автоматически (DHCP)", "Automatic (DHCP)").into() } else { t!("Вручную", "Manual").into() }));
+        out.push((t!("Адрес IP", "IP assignment", "Atribuição de IP").into(), if self.dhcp { t!("Автоматически (DHCP)", "Automatic (DHCP)", "Automático (DHCP)").into() } else { t!("Вручную", "Manual", "Manual").into() }));
         out.push(("MAC".into(), self.mac.clone()));
         out
     }
